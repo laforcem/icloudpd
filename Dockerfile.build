@@ -63,6 +63,7 @@ RUN \
     . .venv/bin/activate && \
     echo "List pip cache..." && \
     pip3 cache list && \
+    python3 -m pip install --disable-pip-version-check --upgrade pip setuptools wheel && \
     python3 -m pip install --disable-pip-version-check -r requirements-pip.txt && \
     pip3 install --disable-pip-version-check . --group dev --group devlinux && \
     BOOTLOADER_CC=musl-gcc pip3 install --disable-pip-version-check staticx==0.14.1
