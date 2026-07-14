@@ -70,10 +70,18 @@ def generate_xmp_file(
     if can_write_file:
         xmp_metadata: XMPMetadata = build_metadata(asset_record)
         xml_doc: ElementTree.Element = generate_xml(xmp_metadata)
+        new_content: bytes = ElementTree.tostring(xml_doc, encoding="utf-8", xml_declaration=True)
+
+        if os.path.exists(sidecar_path) and os.path.getsize(sidecar_path) != 0:
+            with open(sidecar_path, "rb") as f:
+                existing_content = f.read()
+            if existing_content == new_content:
+                logger.debug(f"Not rewriting XMP file {sidecar_path}: content unchanged")
+                return
+
         if not dry_run:
-            # Write the XML to the file
             with open(sidecar_path, "wb") as f:
-                f.write(ElementTree.tostring(xml_doc, encoding="utf-8", xml_declaration=True))
+                f.write(new_content)
 
 
 def build_metadata(asset_record: dict[str, Any]) -> XMPMetadata:
