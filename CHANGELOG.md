@@ -2,14 +2,18 @@
 
 ## Unreleased
 
-## 1.0.1 (2026-07-14)
+Pre-release testing iterations below (`v1.0.0-rcN`) are not the real 1.0.0
+release — that will be cut by the project owner once validation on the real
+deployment target is complete.
+
+## 1.0.0-rc2 (2026-07-14)
 
 - fix: pre-create and chown `/home/icloudpd/.pyicloud` so the non-root
   container user can write session cookies to the mounted session volume
   (Docker created the mountpoint root-owned since the directory didn't
   exist in the image)
 
-## 1.0.0 (2026-07-14)
+## 1.0.0-rc1 (2026-07-14)
 
 **Forked from upstream version 1.32.3 (commit 879c561240d993d748ddb4546f935090502b16d3)**
 
