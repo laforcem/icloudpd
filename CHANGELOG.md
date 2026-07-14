@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.0.0 (2026-07-14)
+
+**Forked from upstream version 1.32.3 (commit 879c561240d993d748ddb4546f935090502b16d3)**
+
+- fix: skip rewriting XMP sidecar when content is unchanged
+- fix: handle corrupt adjustmentSimpleDataEnc without crashing
+
 ## 1.32.3 (2026-05-29)
 
 - fix: restore 2FA for Apple's updated auth flow (2026+) [#1322]https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1322
