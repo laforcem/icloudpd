@@ -1,6 +1,8 @@
 FROM python:3.13-slim AS build
 WORKDIR /src
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 COPY . .
+RUN scripts/patch_version
 RUN pip install --no-cache-dir --disable-pip-version-check .
 
 FROM python:3.13-slim
