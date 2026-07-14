@@ -118,3 +118,23 @@ class BuildXMPMetadata(TestCase):
             50.09418333333333,
             datetime.fromisoformat("2020-02-29T18:35:49"),
         )
+
+    def test_build_metadata_handles_corrupt_adjustment_data(self) -> None:
+        # Truncated version of a real, valid zlib-compressed adjustmentSimpleDataEnc
+        # value (see test_build_metadata above) — decompression must fail on this.
+        assetRecordStub: Dict[str, Any] = {
+            "fields": {
+                "adjustmentSimpleDataEnc": {
+                    "type": "ENCRYPTED_BYTES",
+                    "value": (
+                        "PU67DoIwFP2XMzemBRKxo5Mummiig3G4QJEaCqS9sBD+XRDjdnLeI5xhKogJeoSjwMYfjH1V"
+                        "DB3LKBE/7m4LrqATGUcCrbemYWLbNtDpJFC29hHfjA9fSgkMKz42ZbsUZ72ti1PvMuOhESX7"
+                        "nYIAdd0/g61SG7lRqZyFkFfG0cUMdhWlQFcTLzOz01F"
+                    ),
+                },
+            }
+        }
+
+        metadata = build_metadata(assetRecordStub)  # must not raise
+
+        self.assertIsNone(metadata.Orientation)

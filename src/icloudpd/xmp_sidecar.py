@@ -14,6 +14,8 @@ from xml.etree import ElementTree
 
 from foundation import version_info
 
+logger = logging.getLogger(__name__)
+
 exif_tool = None
 
 
@@ -112,14 +114,17 @@ def build_metadata(asset_record: dict[str, Any]) -> XMPMetadata:
         is_not_bplist = not_(startswith("YnBsaXN0MD"))
 
         if is_not_crdt(data_value) and is_not_bplist(data_value):  # not "crdt" and not "bplist00"
-            adjustments = json.loads(
-                zlib.decompress(
-                    base64.b64decode(asset_record["fields"]["adjustmentSimpleDataEnc"]["value"]),
-                    -zlib.MAX_WBITS,
+            try:
+                adjustments = json.loads(
+                    zlib.decompress(
+                        base64.b64decode(data_value),
+                        -zlib.MAX_WBITS,
+                    )
                 )
-            )
-            if "metadata" in adjustments and "orientation" in adjustments["metadata"]:
-                orientation = adjustments["metadata"]["orientation"]
+                if "metadata" in adjustments and "orientation" in adjustments["metadata"]:
+                    orientation = adjustments["metadata"]["orientation"]
+            except (zlib.error, ValueError, TypeError, json.JSONDecodeError) as e:
+                logger.warning("Error decoding adjustmentSimpleDataEnc: %s", e)
 
     make, digital_source_type = None, None
     if (
