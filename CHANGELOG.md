@@ -6,6 +6,14 @@ Pre-release testing iterations below (`v1.0.0-rcN`) are not the real 1.0.0
 release — that will be cut by the project owner once validation on the real
 deployment target is complete.
 
+## 1.0.0-rc3 (2026-07-14)
+
+- fix: declare `icloudpd.server`'s Flask templates/static assets as
+  package-data so `pip install .` actually includes them — without this,
+  the webui's `/` and `/status` endpoints 500 with
+  `jinja2.exceptions.TemplateNotFound`, breaking the whole
+  `--password-provider webui`/`--mfa-provider webui` auth flow
+
 ## 1.0.0-rc2 (2026-07-14)
 
 - fix: pre-create and chown `/home/icloudpd/.pyicloud` so the non-root
