@@ -100,6 +100,13 @@ addopts = "--doctest-modules"
 where = ["src"]  # list of folders that contain the packages (["."] by default)
 exclude = ["starters"]
 
+[tool.setuptools.package-data]
+# icloudpd.server's Flask templates/static assets aren't .py files, so
+# setuptools excludes them from the wheel unless declared here. Upstream
+# never noticed since they ship via PyInstaller/Nuitka bundling, not
+# `pip install .` — this fork's Dockerfile does the latter.
+"icloudpd.server" = ["templates/**/*", "static/**/*"]
+
 [[tool.mypy.overrides]]
 module = ['piexif.*', 'vcr.*', 'srp.*']
 ignore_missing_imports = true
