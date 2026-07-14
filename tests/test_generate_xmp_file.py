@@ -1,6 +1,7 @@
 # tests/test_generate_xmp_file.py
 import os
 import tempfile
+from typing import Any
 from unittest import TestCase
 from unittest.mock import MagicMock
 
@@ -13,7 +14,7 @@ class GenerateXMPFile(TestCase):
         self.download_path = os.path.join(self.tmpdir.name, "IMG_1234")
         self.sidecar_path = self.download_path + ".xmp"
         self.logger = MagicMock()
-        self.asset_record: dict = {"fields": {}}
+        self.asset_record: dict[str, Any] = {"fields": {}}
 
     def tearDown(self) -> None:
         self.tmpdir.cleanup()
