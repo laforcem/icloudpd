@@ -464,6 +464,23 @@ class PhotosService(PhotoLibrary):
         return f"{self._service_root}/database/1/com.apple.photos.cloud/production/{library_type}"
 
 
+def _pick_newer_asset_record(
+    a: Dict[str, Any], b: Dict[str, Any]
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Given two CPLAsset records for the same master, return (kept, dropped),
+    preferring the one with the later addedDate. A record missing addedDate
+    is treated as older than one that has it."""
+    a_added = a["fields"].get("addedDate", {}).get("value")
+    b_added = b["fields"].get("addedDate", {}).get("value")
+    if b_added is None:
+        return a, b
+    if a_added is None:
+        return b, a
+    if b_added > a_added:
+        return b, a
+    return a, b
+
+
 class PhotoAlbum:
     def __init__(
         self,
@@ -537,12 +554,29 @@ class PhotoAlbum:
 
             response = request.json()
 
-            asset_records = {}
+            asset_records: Dict[str, Dict[str, Any]] = {}
             master_records = []
             for rec in response["records"]:
                 if rec["recordType"] == "CPLAsset":
                     master_id = rec["fields"]["masterRef"]["value"]["recordName"]
-                    asset_records[master_id] = rec
+                    existing = asset_records.get(master_id)
+                    if existing is not None:
+                        kept, dropped = _pick_newer_asset_record(existing, rec)
+                        logger.warning(
+                            "Keeping newest of duplicate metadata for asset %s", master_id
+                        )
+                        logger.debug(
+                            "Duplicate CPLAsset for master %s: kept %s (added %s), "
+                            "dropped %s (added %s)",
+                            master_id,
+                            kept["recordName"],
+                            kept["fields"].get("addedDate", {}).get("value"),
+                            dropped["recordName"],
+                            dropped["fields"].get("addedDate", {}).get("value"),
+                        )
+                        asset_records[master_id] = kept
+                    else:
+                        asset_records[master_id] = rec
                 elif rec["recordType"] == "CPLMaster":
                     master_records.append(rec)
 
