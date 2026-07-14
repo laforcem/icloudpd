@@ -1,53 +1,14 @@
-FROM alpine:3.23 AS runtime_amd64_none
-ENV MUSL_LOCPATH="/usr/share/i18n/locales/musl"
-RUN apk update && apk add --no-cache tzdata musl-locales musl-locales-lang
-WORKDIR /app
-COPY dist/icloud-*.*.*-linux-musl-amd64 icloud
-COPY dist/icloudpd-*.*.*-linux-musl-amd64 icloudpd
+FROM python:3.13-slim AS build
+WORKDIR /src
+COPY . .
+RUN pip install --no-cache-dir --disable-pip-version-check .
 
-FROM alpine:3.23 AS runtime_arm64_none
-ENV MUSL_LOCPATH="/usr/share/i18n/locales/musl"
-RUN apk update && apk add --no-cache tzdata musl-locales musl-locales-lang
-WORKDIR /app
-COPY dist/icloud-*.*.*-linux-musl-arm64 icloud
-COPY dist/icloudpd-*.*.*-linux-musl-arm64 icloudpd
-
-FROM alpine:3.23 AS runtime_arm_v7
-ENV MUSL_LOCPATH="/usr/share/i18n/locales/musl"
-RUN apk update && apk add --no-cache tzdata musl-locales musl-locales-lang
-WORKDIR /app
-COPY dist/icloud-*.*.*-linux-musl-arm32v7 icloud
-COPY dist/icloudpd-*.*.*-linux-musl-arm32v7 icloudpd
-
-FROM runtime_${TARGETARCH}_${TARGETVARIANT:-none} AS runtime
-ENV TZ=UTC
+FROM python:3.13-slim
+RUN useradd --create-home --shell /usr/sbin/nologin icloudpd
+COPY --from=build /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=build /usr/local/bin/icloudpd /usr/local/bin/icloudpd
+COPY --from=build /usr/local/bin/icloud /usr/local/bin/icloud
+USER icloudpd
+WORKDIR /data
 EXPOSE 8080
-WORKDIR /app
-RUN chmod +x /app/icloud /app/icloudpd
-
-# Use a shell script to allow command selection
-COPY <<EOF /app/entrypoint.sh
-#!/bin/sh
-# If first argument is 'icloud' or 'icloudpd', run the corresponding binary
-case "\$1" in
-    icloud)
-        shift
-        exec /app/icloud "\$@"
-        ;;
-    icloudpd)
-        shift
-        exec /app/icloudpd "\$@"
-        ;;
-    *)
-        echo "Error: You must specify either 'icloud' or 'icloudpd' as the first argument."
-        echo "Usage: docker run <image> icloudpd [options]"
-        echo "   or: docker run <image> icloud [options]"
-        exit 1
-        ;;
-esac
-EOF
-
-RUN chmod +x /app/entrypoint.sh
-
-# Default entrypoint allows command selection
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["icloudpd"]
