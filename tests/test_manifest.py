@@ -1,6 +1,7 @@
 import logging
 import os
 from pathlib import Path
+from typing import Iterator
 from unittest import TestCase
 
 import pytest
@@ -52,12 +53,14 @@ class OpenManifestTestCase(TestCase):
 
 class RecordSeenTestCase(TestCase):
     @pytest.fixture(autouse=True)
-    def inject_fixtures(self, tmp_path: Path) -> None:
+    def inject_fixtures(self, tmp_path: Path) -> Iterator[None]:
         self.tmp_path = tmp_path
         self.logger = logging.getLogger("test_manifest")
         handle = manifest.open(self.logger, str(self.tmp_path))
         assert handle is not None
         self.handle = handle
+        yield
+        manifest.close(self.handle)
 
     def test_record_seen_inserts_new_row(self) -> None:
         manifest.record_seen(self.logger, self.handle, "REC1", "/data/IMG_1.JPG", 12345)
@@ -97,12 +100,14 @@ class RecordSeenTestCase(TestCase):
 
 class AllRecordsAndPruneTestCase(TestCase):
     @pytest.fixture(autouse=True)
-    def inject_fixtures(self, tmp_path: Path) -> None:
+    def inject_fixtures(self, tmp_path: Path) -> Iterator[None]:
         self.tmp_path = tmp_path
         self.logger = logging.getLogger("test_manifest")
         handle = manifest.open(self.logger, str(self.tmp_path))
         assert handle is not None
         self.handle = handle
+        yield
+        manifest.close(self.handle)
 
     def test_all_records_returns_every_row(self) -> None:
         manifest.record_seen(self.logger, self.handle, "REC1", "/data/a.jpg", 1)
