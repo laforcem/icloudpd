@@ -40,23 +40,26 @@ The module exposes a narrow interface; nothing outside `manifest.py` touches SQL
 ```python
 def open(download_dir: str) -> ManifestHandle: ...
 def record_seen(handle, record_name: str, local_path: str, size_bytes: int) -> None: ...
-def get(handle, record_name: str) -> ManifestRow | None: ...
+def get_all_for_asset(handle, record_name: str) -> Sequence[ManifestRow]: ...
 def all_records(handle) -> Iterator[ManifestRow]: ...
-def prune(handle, record_name: str) -> None: ...
+def prune(handle, record_name: str, local_path: str) -> None: ...
 ```
 
-`record_seen` is a single upsert used both right after a fresh download and for assets found already on disk by the existing `isfile()` check — both cases mean "this asset's local file exists right now," differing only in whether a row already exists. On insert it sets `first_downloaded_utc = last_seen_utc = now`; on conflict it updates only `last_seen_utc` (and `local_path`/`size_bytes`, in case the path changed). This also removes the need for a distinct backfill mechanism — see Backfill below.
+`record_seen` is a single upsert used both right after a fresh download and for assets found already on disk by the existing `isfile()` check — both cases mean "this file exists right now," differing only in whether a row already exists for that `(record_name, local_path)` pair. On insert it sets `first_downloaded_utc = last_seen_utc = now`; on conflict it updates only `last_seen_utc` (and `size_bytes`, in case the reported size changed). This also removes the need for a distinct backfill mechanism — see Backfill below.
+
+One `PhotoAsset` (one `recordName`) can produce more than one local file: a Live Photo's video companion, multiple `--size` values requested in one invocation, or a RAW+JPEG pair. `get_all_for_asset` returns every row for a given `recordName` — 0 to N — which is the shape a future deletion-sync consumer actually needs: an asset is only truly gone once *all* of its files are missing, not just one.
 
 ## Schema
 
 ```sql
 CREATE TABLE downloaded_assets (
-    record_name         TEXT PRIMARY KEY,
-    local_path           TEXT NOT NULL,
-    size_bytes            INTEGER NOT NULL,
-    checksum              TEXT NULL,
-    first_downloaded_utc TEXT NOT NULL,
-    last_seen_utc        TEXT NOT NULL
+    record_name          TEXT NOT NULL,
+    local_path            TEXT NOT NULL,
+    size_bytes             INTEGER NOT NULL,
+    checksum               TEXT NULL,
+    first_downloaded_utc  TEXT NOT NULL,
+    last_seen_utc         TEXT NOT NULL,
+    PRIMARY KEY (record_name, local_path)
 );
 ```
 
@@ -64,14 +67,15 @@ CREATE TABLE downloaded_assets (
 
 ## Write path
 
-- On successful download in `base.py` (after `download_media()` succeeds): call `record_seen(handle, recordName, path, size_bytes)`.
-- For assets that pass the existing `isfile()` skip check (i.e. already downloaded, no-op this run): also call `record_seen(handle, recordName, path, size_bytes)`. Same function, same call site pattern — the upsert semantics (insert if new, else just refresh `last_seen_utc`) make "freshly downloaded" and "already present" the same case from the manifest's point of view.
+- On successful download in `base.py` (after `download_media()` succeeds, and only when not `--dry-run` — a dry run never actually writes the file, so recording it would misrepresent real filesystem state): call `record_seen(handle, recordName, path, size_bytes)`, using the iCloud-reported `version.size` as `size_bytes` (avoids an extra `os.stat()` call; the existing dedup logic already guarantees this matches the local file once the download succeeds).
+- For assets that pass the existing `isfile()` skip check (i.e. already downloaded, no-op this run): also call `record_seen(handle, recordName, path, size_bytes)`, unconditionally of `dry_run` — the file genuinely exists on disk either way, so recording it is always accurate.
+- Both the primary download and the Live Photo companion download (a separate code path in `download_builder`, sharing the same `recordName` but a distinct `local_path`) call `record_seen` at their own success/already-exists points. This is what makes `(record_name, local_path)` a composite key necessary, not just convenient.
 - This is what lets a future deletion-sync feature distinguish "seen last run, missing now" (deleted) from "never seen" (irrelevant).
 - Manifest writes are **best-effort** and never block or fail a download. If a write fails (disk full, lock contention), log a warning and continue. A missing/stale manifest row is not data loss — it's corrected on the next run that sees the file.
 
 ## Backfill
 
-No separate backfill mechanism. Because `record_seen` is called for every asset that passes the existing `isfile()` check — not only newly-downloaded ones — the very first run after upgrading already walks the full existing library and inserts a row for every pre-existing file it finds, as a side effect of normal operation. No `schema_version` marker, no dedicated one-time pass, no migration risk from getting that pass wrong.
+No separate backfill mechanism. Because `record_seen` is called for every file that passes the existing `isfile()` check — not only newly-downloaded ones — the very first run after upgrading already walks the full existing library and inserts a row for every pre-existing file it finds, as a side effect of normal operation. No `schema_version` marker, no dedicated one-time pass, no migration risk from getting that pass wrong.
 
 ## Error handling
 
@@ -80,7 +84,7 @@ No separate backfill mechanism. Because `record_seen` is called for every asset 
 
 ## Testing
 
-- Unit tests for `manifest.py` in isolation: open/record_seen/get/all_records/prune against a temporary sqlite file, including upsert behavior (insert vs. update-only-last_seen on conflict).
+- Unit tests for `manifest.py` in isolation: open/record_seen/get_all_for_asset/all_records/prune against a temporary sqlite file, including upsert behavior (insert vs. update-only-last_seen on conflict) and multiple rows per `record_name` (e.g. still + Live Photo video).
 - One integration test asserting that a successful download in the existing download-flow tests also produces a corresponding manifest row.
 - Backfill-by-upsert test: pre-populate a download directory with files matching iCloud assets but no manifest, run once, assert rows are created with today's timestamp for every pre-existing file — proving backfill is an emergent property of the write path, not a separate code path.
 
