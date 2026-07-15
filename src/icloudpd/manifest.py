@@ -72,3 +72,50 @@ def close(handle: ManifestHandle) -> None:
 
 def _now_utc_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def record_seen(
+    logger: logging.Logger,
+    handle: ManifestHandle,
+    record_name: str,
+    local_path: str,
+    size_bytes: int,
+) -> None:
+    """Record that a file for this asset exists locally right now.
+
+    Upserts on (record_name, local_path): inserts a fresh row on first
+    sight, or refreshes last_seen_utc (and size_bytes) if the row already
+    exists. Never raises - failures are logged and swallowed.
+    """
+    now = _now_utc_iso()
+    try:
+        handle.connection.execute(
+            """
+            INSERT INTO downloaded_assets
+                (record_name, local_path, size_bytes, checksum,
+                 first_downloaded_utc, last_seen_utc)
+            VALUES (?, ?, ?, NULL, ?, ?)
+            ON CONFLICT (record_name, local_path) DO UPDATE SET
+                size_bytes = excluded.size_bytes,
+                last_seen_utc = excluded.last_seen_utc
+            """,
+            (record_name, local_path, size_bytes, now, now),
+        )
+        handle.connection.commit()
+    except sqlite3.Error as ex:
+        logger.warning(
+            "Could not record manifest entry for %s (%s): %s", record_name, local_path, ex
+        )
+
+
+def get_all_for_asset(handle: ManifestHandle, record_name: str) -> Sequence[ManifestRow]:
+    cursor = handle.connection.execute(
+        """
+        SELECT record_name, local_path, size_bytes, checksum,
+               first_downloaded_utc, last_seen_utc
+        FROM downloaded_assets
+        WHERE record_name = ?
+        """,
+        (record_name,),
+    )
+    return [ManifestRow(*row) for row in cursor.fetchall()]
