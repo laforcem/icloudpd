@@ -49,3 +49,35 @@ def build_event(
         message=message,
         data=data if data is not None else {},
     )
+
+
+def notify(
+    logger: logging.Logger,
+    script_path: str | None,
+    event: NotificationEvent,
+    timeout_s: float = 10.0,
+) -> None:
+    if script_path is None:
+        return
+    payload = json.dumps(asdict(event))
+    try:
+        result = subprocess.run(
+            [script_path],
+            input=payload,
+            timeout=timeout_s,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "Notification script %s exited with code %d: %s",
+                script_path,
+                result.returncode,
+                result.stderr,
+            )
+    except OSError as ex:
+        logger.warning("Could not run notification script %s: %s", script_path, ex)
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "Notification script %s timed out after %.1fs", script_path, timeout_s
+        )
