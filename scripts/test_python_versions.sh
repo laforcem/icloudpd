@@ -60,7 +60,7 @@ ENV PATH="/app/venv/bin:\$PATH"
 # Install dependencies
 RUN pip install --upgrade pip
 RUN pip install -r requirements-pip.txt
-RUN pip install . --group dev --group test
+RUN pip install . --group test
 
 # Install additional packages for Python < 3.11 timezone support
 RUN if [ "\$(python -c 'import sys; print(sys.version_info.minor < 11 and sys.version_info.major == 3)')" = "True" ]; then \\
