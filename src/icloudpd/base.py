@@ -800,6 +800,10 @@ def download_builder(
                             lp_file_exists = os.path.isfile(lp_download_path)
                     if lp_file_exists:
                         logger.debug("%s already exists", truncate_middle(lp_download_path, 96))
+                        if manifest_handle is not None:
+                            manifest.record_seen(
+                                logger, manifest_handle, photo.id, lp_download_path, version.size
+                            )
                 if not lp_file_exists:
                     truncated_path = truncate_middle(lp_download_path, 96)
                     logger.debug("Downloading %s...", truncated_path)
@@ -815,6 +819,10 @@ def download_builder(
                     )
                     success = download_result and success
                     if download_result:
+                        if not dry_run and manifest_handle is not None:
+                            manifest.record_seen(
+                                logger, manifest_handle, photo.id, lp_download_path, version.size
+                            )
                         logger.info("Downloaded %s", truncated_path)
     return success
 

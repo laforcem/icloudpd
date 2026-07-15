@@ -168,3 +168,45 @@ class ManifestIntegrationTestCase(TestCase):
         # ...and the stale legacy "-original" path, whose size was proven wrong,
         # must not be recorded.
         self.assertNotIn(os.path.normpath("2018/07/30/IMG_7408-original.JPG"), recorded_paths)
+
+    def test_live_photo_video_component_gets_its_own_manifest_row(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+
+        files_to_create: list[tuple[str, str, int]] = []
+        files_to_download = [
+            ("2020/11/04", "IMG_0516.HEIC"),
+            ("2020/11/04", "IMG_0514.HEIC"),
+            ("2020/11/04", "IMG_0514_HEVC.MOV"),
+            ("2020/11/04", "IMG_0512.HEIC"),
+            ("2020/11/04", "IMG_0512_HEVC.MOV"),
+        ]
+
+        data_dir, _result = run_icloudpd_test(
+            self.assertEqual,
+            self.root_path,
+            base_dir,
+            "download_live_photos.yml",
+            files_to_create,
+            files_to_download,
+            [
+                "--username",
+                "jdoe@gmail.com",
+                "--password",
+                "password1",
+                "--recent",
+                "3",
+                "--no-progress-bar",
+                "--threads-num",
+                "1",
+            ],
+        )
+
+        rows = self._manifest_rows(data_dir)
+        by_record: dict[str, set[str]] = {}
+        for record_name, path, _size in rows:
+            by_record.setdefault(record_name, set()).add(os.path.relpath(path, data_dir))
+
+        # Both the still image and its Live Photo video share one recordName
+        # but must appear as two distinct manifest rows.
+        matching = [paths for paths in by_record.values() if len(paths) >= 2]
+        self.assertTrue(matching, f"expected one recordName with 2+ local paths, got: {by_record}")
