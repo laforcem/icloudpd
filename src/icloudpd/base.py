@@ -678,11 +678,20 @@ def download_builder(
                 photo_size = version.size
                 if file_size != photo_size:
                     download_path = (f"-{photo_size}.").join(download_path.rsplit(".", 1))
+                    original_download_path = None
                     logger.debug("%s deduplicated", truncate_middle(download_path, 96))
                     file_exists = os.path.isfile(download_path)
             if file_exists:
                 counter.increment()
                 logger.debug("%s already exists", truncate_middle(download_path, 96))
+                if manifest_handle is not None:
+                    manifest.record_seen(
+                        logger,
+                        manifest_handle,
+                        photo.id,
+                        original_download_path or download_path,
+                        version.size,
+                    )
 
         if not file_exists:
             counter.reset()
@@ -726,6 +735,10 @@ def download_builder(
                         )
                     if not dry_run:
                         download.set_utime(download_path, created_date)
+                        if manifest_handle is not None:
+                            manifest.record_seen(
+                                logger, manifest_handle, photo.id, download_path, version.size
+                            )
                     logger.info("Downloaded %s", truncated_path)
 
         if xmp_sidecar:
