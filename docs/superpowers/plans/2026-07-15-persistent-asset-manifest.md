@@ -565,119 +565,80 @@ def download_builder(
 ) -> bool:
 ```
 
-- [ ] **Step 3: Open the manifest and pass it into the `downloader` partial**
+- [ ] **Step 3 (revised during implementation): open the manifest inside `core_single_run`, not eagerly in `_process_all_users_once`**
 
-Find (around line 399-420):
+The original plan called `manifest.open()` unconditionally in `_process_all_users_once`, before `core_single_run` (and therefore before authentication) even runs, and baked `manifest_handle` into the `downloader` partial at construction time. That broke two pre-existing tests: `test_cli.py::test_missing_directory` (asserts no directory gets created when auth fails) and `test_issue_1220_only_print_filenames_dedup_bug.py` (asserts `--only-print-filenames` never writes to the download directory) — because `manifest.open()` unconditionally does `os.makedirs` + `sqlite3.connect` + schema creation as soon as it's called, regardless of whether auth will succeed or whether the run is print-only.
+
+The fix: leave `_process_all_users_once`'s `downloader` partial construction unchanged (do NOT add `manifest_handle` there — revert to the original code with no manifest involvement at all). Instead:
+
+In `download_builder`'s signature, `manifest_handle: manifest.ManifestHandle | None,` still goes right after `raw_policy: RawTreatmentPolicy,` and before `icloud: PyiCloudService,` (unchanged from the original Step 2).
+
+In `core_single_run`, find:
 
 ```python
-            downloader = (
-                partial(
-                    download_builder,
-                    logger,
-                    user_config.folder_structure,
-                    user_config.directory,
-                    user_config.sizes,
-                    user_config.force_size,
-                    global_config.only_print_filenames,
-                    user_config.set_exif_datetime,
-                    user_config.skip_live_photos,
-                    user_config.live_photo_size,
-                    user_config.dry_run,
-                    user_config.file_match_policy,
-                    user_config.xmp_sidecar,
-                    lp_filename_generator,
-                    filename_builder,
-                    user_config.align_raw,
-                )
-                if user_config.directory is not None
-                else (lambda _s, _c, _p: False)
-            )
+                    directory = os.path.normpath(user_config.directory)
+
+                    if user_config.skip_photos or user_config.skip_videos:
 ```
 
 Replace with:
 
 ```python
-            manifest_handle = (
-                manifest.open(logger, user_config.directory)
-                if user_config.directory is not None
-                else None
-            )
+                    directory = os.path.normpath(user_config.directory)
 
-            downloader = (
-                partial(
-                    download_builder,
-                    logger,
-                    user_config.folder_structure,
-                    user_config.directory,
-                    user_config.sizes,
-                    user_config.force_size,
-                    global_config.only_print_filenames,
-                    user_config.set_exif_datetime,
-                    user_config.skip_live_photos,
-                    user_config.live_photo_size,
-                    user_config.dry_run,
-                    user_config.file_match_policy,
-                    user_config.xmp_sidecar,
-                    lp_filename_generator,
-                    filename_builder,
-                    user_config.align_raw,
-                    manifest_handle,
-                )
-                if user_config.directory is not None
-                else (lambda _s, _c, _p: False)
-            )
+                    manifest_handle = (
+                        manifest.open(logger, directory)
+                        if not global_config.only_print_filenames
+                        else None
+                    )
+
+                    try:
+                        if user_config.skip_photos or user_config.skip_videos:
 ```
 
-- [ ] **Step 4: Close the manifest after `core_single_run` completes for this user**
-
-Find (around line 436-448):
+Then indent the entire rest of that `else:` branch (everything from the `if user_config.skip_photos` block down through the closing `if user_config.auto_delete: ... else: pass` block, i.e. up to but not including the `except PyiCloudFailedLoginException` line) one level deeper to sit inside the new `try:`, and close it with:
 
 ```python
-            # Use core_single_run since we've disabled watch at this level
-            logger.info(f"Processing user: {user_config.username}")
-            result = core_single_run(
-                logger,
-                status_exchange,
-                global_config,
-                user_config,
-                password_providers_dict,
-                passer,
-                downloader,
-                notificator,
-                lp_filename_generator,
-            )
+                    finally:
+                        if manifest_handle is not None:
+                            manifest.close(manifest_handle)
+        except PyiCloudFailedLoginException as error:
+```
+
+This mirrors the existing pattern already used for `icloud` in this same function — `icloud` is only known after authentication succeeds, so it's bound into `download_photo` at call time (`download_photo = partial(downloader, icloud)`), not baked into `downloader` at construction time before auth. `manifest_handle` follows the identical pattern:
+
+Find:
+
+```python
+                            download_photo = partial(downloader, icloud)
 ```
 
 Replace with:
 
 ```python
-            # Use core_single_run since we've disabled watch at this level
-            logger.info(f"Processing user: {user_config.username}")
-            try:
-                result = core_single_run(
-                    logger,
-                    status_exchange,
-                    global_config,
-                    user_config,
-                    password_providers_dict,
-                    passer,
-                    downloader,
-                    notificator,
-                    lp_filename_generator,
-                )
-            finally:
-                if manifest_handle is not None:
-                    manifest.close(manifest_handle)
+                            download_photo = partial(downloader, manifest_handle, icloud)
 ```
 
-- [ ] **Step 5: Run the full existing test suite to confirm no regression**
+`core_single_run`'s `downloader` parameter type annotation must also change from `Callable[[PyiCloudService, Counter, PhotoAsset], bool]` to `Callable[[manifest.ManifestHandle | None, PyiCloudService, Counter, PhotoAsset], bool]`, and the `(lambda _s, _c, _p: False)` fallback (used when `user_config.directory is None`) in `_process_all_users_once` must become `(lambda _m, _s, _c, _p: False)` to match the new arity.
 
-Run: `python3 -m pytest --numprocesses auto`
-Expected: all pre-existing tests PASS (manifest is wired in but not yet written to, so behavior is unchanged). If `test_cli.py` or similar asserts on `download_builder`'s exact signature via introspection, update the call there too — check first:
+Gating `manifest.open()` on `not global_config.only_print_filenames` means `manifest_handle` is `None` in that mode — which also means Tasks 6-7's `if manifest_handle is not None: manifest.record_seen(...)` guards automatically skip all manifest writes under `--only-print-filenames`, with no separate guard needed there.
 
-Run: `grep -rn "download_builder" tests/`
+- [ ] **Step 4: Run the full existing test suite to confirm no regression**
 
-If any test constructs a `download_builder` call directly (not through the `downloader` partial built in `base.py`), add `None` as the `manifest_handle` argument at the correct position in that call.
+Run: `.venv/bin/python -m pytest --numprocesses auto`
+Expected: same 8 known-environmental failures as the pre-existing baseline (locale/timezone, unrelated to this change), all other tests PASS — including `test_missing_directory` and `test_issue_1220_only_print_filenames_dedup_bug` specifically, since those are what this revised approach fixes.
+
+Also check for direct callers of `download_builder`:
+
+Run: `grep -rn "download_builder" tests/ src/`
+
+If any test constructs a `download_builder` call directly (not through the `downloader` partial built in `base.py`), add `None` as the `manifest_handle` argument at the correct position in that call. (As implemented, none exist.)
+
+- [ ] **Step 5: Run mypy and ruff on the changed file**
+
+Run: `.venv/bin/python -m mypy src/icloudpd/base.py --strict --python-version 3.10`
+Run: `.venv/bin/python -m ruff check src/icloudpd/base.py --ignore "E402"`
+Run: `.venv/bin/python -m ruff format --check src/icloudpd/base.py`
 
 - [ ] **Step 6: Commit**
 
@@ -691,7 +652,7 @@ git commit -m "feat: thread manifest handle through download_builder (no writes 
 ## Task 6: Record primary-download hits (already-exists and freshly-downloaded)
 
 **Files:**
-- Modify: `src/icloudpd/base.py:673-728`
+- Modify: `src/icloudpd/base.py` (inside `download_builder`'s primary-size download loop)
 
 - [ ] **Step 1: Write the failing integration test**
 
@@ -776,7 +737,7 @@ Expected: FAIL — the assertion on `2018/07/31/IMG_7409.JPG` (freshly downloade
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `src/icloudpd/base.py`, find (around line 673-684):
+In `src/icloudpd/base.py`, inside `download_builder` (unaffected by Task 5's `core_single_run` reindentation — its own indentation is unchanged), find:
 
 ```python
         if file_exists:
@@ -814,7 +775,7 @@ Replace with:
                     )
 ```
 
-Then find (around line 706-728):
+Then find:
 
 ```python
                 if download_result:
@@ -898,7 +859,7 @@ git commit -m "feat: record manifest rows for primary downloads and existing fil
 ## Task 7: Record Live Photo companion hits
 
 **Files:**
-- Modify: `src/icloudpd/base.py:776-805`
+- Modify: `src/icloudpd/base.py` (inside `download_builder`'s Live Photo download branch)
 - Test: `tests/test_manifest_integration.py`
 
 - [ ] **Step 1: Write the failing integration test**
@@ -961,7 +922,7 @@ Expected: FAIL — no `recordName` has 2+ recorded paths, since the Live Photo b
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `src/icloudpd/base.py`, find (around line 776-789):
+In `src/icloudpd/base.py`, inside `download_builder`'s Live Photo branch, find:
 
 ```python
             else:
@@ -1003,7 +964,7 @@ Replace with:
                 if not lp_file_exists:
 ```
 
-Then find (around line 790-805):
+Then find:
 
 ```python
                     truncated_path = truncate_middle(lp_download_path, 96)
