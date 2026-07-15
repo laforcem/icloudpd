@@ -73,7 +73,7 @@ class ManifestIntegrationTestCase(TestCase):
         # detected via the fallback lookup, and the manifest must record the path
         # that actually exists on disk (the "-original" suffixed one), not the
         # new-style path that was never created.
-        base_dir = os.path.join(self.fixtures_path, "test_download_over_old_original_photos")
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
 
         files_to_create = [
             ("2018/07/30", "IMG_7408-original.JPG", 1151066),
@@ -123,7 +123,7 @@ class ManifestIntegrationTestCase(TestCase):
         # path, the manifest row must point at THAT freshly-resolved path (with
         # the correct size), not at the stale legacy "-original" file whose size
         # was just proven not to match.
-        base_dir = os.path.join(self.fixtures_path, "test_download_over_old_original_photos")
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
 
         files_to_create = [
             # Legacy file present, but its size does NOT match iCloud's reported
