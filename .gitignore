@@ -18,6 +18,9 @@ venv
 *.spec
 # docs
 docs/_build
+
+# git worktrees
+.worktrees/
 # exclude since there is no js development, just for local testing npm packaging
 node_modules/
 /package.json
