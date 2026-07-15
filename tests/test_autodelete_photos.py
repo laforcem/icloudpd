@@ -943,6 +943,7 @@ class AutodeletePhotosTestCase(TestCase):
                 "--cookie-directory",
                 cookie_dir,
             ],
+            additional_env={"TZ": "UTC"},
         )
         self.assertIn("Looking up all photos...", result.output)
         self.assertIn(
@@ -1035,6 +1036,7 @@ class AutodeletePhotosTestCase(TestCase):
                 "--cookie-directory",
                 cookie_dir,
             ],
+            additional_env={"TZ": "UTC"},
         )
         self.assertIn("Looking up all photos...", result.output)
         self.assertIn(

@@ -1,0 +1,31 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install locales for tests
+        run: sudo apt-get update && sudo apt-get -y install locales locales-all
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install test dependencies
+        run: >
+          python3 -m pip install --disable-pip-version-check -r requirements-pip.txt &&
+          pip3 install --disable-pip-version-check . --group test
+
+      - name: Test
+        run: scripts/test

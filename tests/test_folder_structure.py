@@ -1,4 +1,5 @@
 import inspect
+import locale
 import os
 import sys
 from typing import List, Tuple
@@ -10,6 +11,18 @@ from tests.helpers import (
     path_from_project_root,
     run_icloudpd_test,
 )
+
+
+def _locale_available(name: str) -> bool:
+    """Whether the OS has `name` installed, without disturbing the current locale."""
+    original = locale.setlocale(locale.LC_ALL)
+    try:
+        locale.setlocale(locale.LC_ALL, name)
+        return True
+    except locale.Error:
+        return False
+    finally:
+        locale.setlocale(locale.LC_ALL, original)
 
 
 class FolderStructureTestCase(TestCase):
@@ -123,6 +136,9 @@ class FolderStructureTestCase(TestCase):
 
     @pytest.mark.skipif(sys.platform == "win32", reason="local strings are not working on windows")
     def test_folder_structure_de_posix(self) -> None:
+        if not _locale_available("de_DE.UTF-8"):
+            pytest.skip("de_DE.UTF-8 locale is not installed on this system")
+
         base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
 
         data_dir, result = run_icloudpd_test(
