@@ -7,7 +7,6 @@ import itertools
 import json
 import logging
 import os
-import subprocess
 import sys
 import time
 import typing
@@ -38,12 +37,11 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from tzlocal import get_localzone
 
 from foundation.core import compose, identity, map_, partial_1_1
-from icloudpd import download, exif_datetime, manifest
+from icloudpd import download, exif_datetime, manifest, notifications
 from icloudpd.authentication import authenticator
 from icloudpd.autodelete import autodelete_photos
 from icloudpd.config import GlobalConfig, UserConfig
 from icloudpd.counter import Counter
-from icloudpd.email_notifications import send_2sa_notification
 from icloudpd.filename_policies import build_filename_with_policies, create_filename_builder
 from icloudpd.log_level import LogLevel
 from icloudpd.mfa_provider import MFAProvider
@@ -423,13 +421,6 @@ def _process_all_users_once(
                 notificator_builder,
                 logger,
                 user_config.username,
-                user_config.smtp_username,
-                user_config.smtp_password,
-                user_config.smtp_host,
-                user_config.smtp_port,
-                user_config.smtp_no_tls,
-                user_config.notification_email,
-                user_config.notification_email_from,
                 str(user_config.notification_script) if user_config.notification_script else None,
             )
 
@@ -463,38 +454,18 @@ def _process_all_users_once(
 def notificator_builder(
     logger: logging.Logger,
     username: str,
-    smtp_username: str | None,
-    smtp_password: str | None,
-    smtp_host: str,
-    smtp_port: int,
-    smtp_no_tls: bool,
-    notification_email: str | None,
-    notification_email_from: str | None,
     notification_script: str | None,
 ) -> None:
-    try:
-        if notification_script is not None:
-            logger.debug("Executing notification script...")
-            subprocess.call([notification_script])
-        else:
-            pass
-        if smtp_username is not None or notification_email is not None:
-            send_2sa_notification(
-                logger,
-                username,
-                smtp_username,
-                smtp_password,
-                smtp_host,
-                smtp_port,
-                smtp_no_tls,
-                notification_email,
-                notification_email_from,
-            )
-        else:
-            pass
-    except Exception as error:
-        logger.error("Notification of the required MFA failed")
-        logger.debug(error)
+    event = notifications.build_event(
+        event_type="session_expired",
+        username=username,
+        message=(
+            f"{username}'s two-step authentication has expired for icloudpd. "
+            "Please log in to your server and run the script manually to update "
+            "two-step authentication."
+        ),
+    )
+    notifications.notify(logger, notification_script, event)
 
 
 @singledispatch
