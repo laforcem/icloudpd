@@ -141,3 +141,46 @@ class AllRecordsAndPruneTestCase(TestCase):
         manifest.close(self.handle)  # closed connection -> sqlite3.ProgrammingError on use
         # Must not raise
         manifest.prune(self.logger, self.handle, "REC1", "/data/a.jpg")
+
+
+class PerDirectoryIsolationTestCase(TestCase):
+    """Two download directories must get independent manifest databases,
+    with no cross-directory visibility of rows - matching icloudpd's
+    existing per-account/per-directory isolation model (see design spec)."""
+
+    @pytest.fixture(autouse=True)
+    def inject_fixtures(self, tmp_path: Path) -> None:
+        self.tmp_path = tmp_path
+        self.logger = logging.getLogger("test_manifest")
+
+    def test_two_directories_get_independent_manifest_files_and_rows(self) -> None:
+        dir_a = os.path.join(str(self.tmp_path), "library_a")
+        dir_b = os.path.join(str(self.tmp_path), "library_b")
+        os.makedirs(dir_a)
+        os.makedirs(dir_b)
+
+        handle_a = manifest.open(self.logger, dir_a)
+        handle_b = manifest.open(self.logger, dir_b)
+        assert handle_a is not None
+        assert handle_b is not None
+        try:
+            manifest.record_seen(self.logger, handle_a, "REC-A", "/library_a/a.jpg", 111)
+            manifest.record_seen(self.logger, handle_b, "REC-B", "/library_b/b.jpg", 222)
+
+            db_a = os.path.join(dir_a, ".icloudpd", "state.db")
+            db_b = os.path.join(dir_b, ".icloudpd", "state.db")
+            self.assertTrue(os.path.isfile(db_a))
+            self.assertTrue(os.path.isfile(db_b))
+            self.assertNotEqual(db_a, db_b)
+
+            rows_a = list(manifest.all_records(handle_a))
+            rows_b = list(manifest.all_records(handle_b))
+            self.assertEqual([row.record_name for row in rows_a], ["REC-A"])
+            self.assertEqual([row.record_name for row in rows_b], ["REC-B"])
+
+            # Neither directory's manifest knows about the other's asset
+            self.assertEqual(manifest.get_all_for_asset(handle_a, "REC-B"), [])
+            self.assertEqual(manifest.get_all_for_asset(handle_b, "REC-A"), [])
+        finally:
+            manifest.close(handle_a)
+            manifest.close(handle_b)
