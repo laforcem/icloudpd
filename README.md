@@ -1,4 +1,4 @@
-# This fork is a major work-in-progress. I plan to add more robist documentation ASAP as fixed and functionality changes come in.
+# This fork is a major work-in-progress. I plan to add more robust documentation ASAP as fixed and functionality changes come in.
 
 # iCloud Photos Downloader [![Quality Checks](https://github.com/icloud-photos-downloader/icloud_photos_downloader/workflows/Quality%20Checks/badge.svg)](https://github.com/icloud-photos-downloader/icloud_photos_downloader/actions/workflows/quality-checks.yml) [![Build and Package](https://github.com/icloud-photos-downloader/icloud_photos_downloader/workflows/Produce%20Artifacts/badge.svg)](https://github.com/icloud-photos-downloader/icloud_photos_downloader/actions/workflows/produce-artifacts.yml) [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
