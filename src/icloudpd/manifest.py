@@ -119,3 +119,30 @@ def get_all_for_asset(handle: ManifestHandle, record_name: str) -> Sequence[Mani
         (record_name,),
     )
     return [ManifestRow(*row) for row in cursor.fetchall()]
+
+
+def all_records(handle: ManifestHandle) -> Iterator[ManifestRow]:
+    cursor = handle.connection.execute(
+        """
+        SELECT record_name, local_path, size_bytes, checksum,
+               first_downloaded_utc, last_seen_utc
+        FROM downloaded_assets
+        """
+    )
+    for row in cursor:
+        yield ManifestRow(*row)
+
+
+def prune(
+    logger: logging.Logger, handle: ManifestHandle, record_name: str, local_path: str
+) -> None:
+    try:
+        handle.connection.execute(
+            "DELETE FROM downloaded_assets WHERE record_name = ? AND local_path = ?",
+            (record_name, local_path),
+        )
+        handle.connection.commit()
+    except sqlite3.Error as ex:
+        logger.warning(
+            "Could not prune manifest entry for %s (%s): %s", record_name, local_path, ex
+        )

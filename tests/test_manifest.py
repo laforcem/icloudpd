@@ -93,3 +93,46 @@ class RecordSeenTestCase(TestCase):
         manifest.close(self.handle)  # closed connection -> sqlite3.ProgrammingError on use
         # Must not raise
         manifest.record_seen(self.logger, self.handle, "REC1", "/data/IMG_1.JPG", 12345)
+
+
+class AllRecordsAndPruneTestCase(TestCase):
+    @pytest.fixture(autouse=True)
+    def inject_fixtures(self, tmp_path: Path) -> None:
+        self.tmp_path = tmp_path
+        self.logger = logging.getLogger("test_manifest")
+        handle = manifest.open(self.logger, str(self.tmp_path))
+        assert handle is not None
+        self.handle = handle
+
+    def test_all_records_returns_every_row(self) -> None:
+        manifest.record_seen(self.logger, self.handle, "REC1", "/data/a.jpg", 1)
+        manifest.record_seen(self.logger, self.handle, "REC2", "/data/b.jpg", 2)
+
+        rows = list(manifest.all_records(self.handle))
+        self.assertEqual(len(rows), 2)
+        record_names = {row.record_name for row in rows}
+        self.assertEqual(record_names, {"REC1", "REC2"})
+
+    def test_all_records_on_empty_manifest_returns_empty(self) -> None:
+        rows = list(manifest.all_records(self.handle))
+        self.assertEqual(rows, [])
+
+    def test_prune_removes_only_matching_row(self) -> None:
+        manifest.record_seen(self.logger, self.handle, "REC1", "/data/a.jpg", 1)
+        manifest.record_seen(self.logger, self.handle, "REC1", "/data/a_HEVC.MOV", 2)
+
+        manifest.prune(self.logger, self.handle, "REC1", "/data/a.jpg")
+
+        rows = manifest.get_all_for_asset(self.handle, "REC1")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].local_path, "/data/a_HEVC.MOV")
+
+    def test_prune_nonexistent_row_is_a_no_op(self) -> None:
+        manifest.prune(self.logger, self.handle, "NOPE", "/data/nope.jpg")
+        # Must not raise
+        self.assertEqual(list(manifest.all_records(self.handle)), [])
+
+    def test_prune_swallows_sqlite_errors(self) -> None:
+        manifest.close(self.handle)  # closed connection -> sqlite3.ProgrammingError on use
+        # Must not raise
+        manifest.prune(self.logger, self.handle, "REC1", "/data/a.jpg")
