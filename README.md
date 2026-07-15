@@ -1,4 +1,5 @@
-# This fork is a major work-in-progress. I plan to add more robust documentation ASAP as fixed and functionality changes come in.
+# This fork is a major work-in-progress.
+I plan to add more robust documentation ASAP as fixes and functionality changes come in. The below README is pre-fork and may not reflect the state of the repo right now.
 
 # iCloud Photos Downloader [![Quality Checks](https://github.com/icloud-photos-downloader/icloud_photos_downloader/workflows/Quality%20Checks/badge.svg)](https://github.com/icloud-photos-downloader/icloud_photos_downloader/actions/workflows/quality-checks.yml) [![Build and Package](https://github.com/icloud-photos-downloader/icloud_photos_downloader/workflows/Produce%20Artifacts/badge.svg)](https://github.com/icloud-photos-downloader/icloud_photos_downloader/actions/workflows/produce-artifacts.yml) [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
