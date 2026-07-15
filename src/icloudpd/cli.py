@@ -143,49 +143,11 @@ def add_options_for_user(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
     )
 
     cloned.add_argument(
-        "--smtp-username",
-        help="SMTP username for sending email notifications when two-step authentication expires.",
-        default=None,
-    )
-    cloned.add_argument(
-        "--smtp-password",
-        help="SMTP password for sending email notifications when two-step authentication expires.",
-        default=None,
-    )
-    cloned.add_argument(
-        "--smtp-host",
-        help="SMTP server host for notifications",
-        default="smtp.gmail.com",
-    )
-    cloned.add_argument(
-        "--smtp-port",
-        help="SMTP server port. Default: %(default)i",
-        type=int,
-        default=587,
-    )
-    cloned.add_argument(
-        "--smtp-no-tls",
-        help="Disable TLS for SMTP (TLS is required for Gmail)",
-        action="store_true",
-    )
-    cloned.add_argument(
-        "--notification-email",
-        help="Email address where you would like to receive email notifications. "
-        "Default: SMTP username",
-        default=None,
-        type=str,
-    )
-    cloned.add_argument(
-        "--notification-email-from",
-        help="Email address from which you would like to receive email notifications. "
-        "Default: SMTP username or notification-email",
-        default=None,
-        type=str,
-    )
-    cloned.add_argument(
         "--notification-script",
         type=pathlib.Path,
-        help="Path to external script to run when two-factor authentication expires.",
+        help="Path to external script to run when a notification event occurs "
+        "(e.g. two-step authentication expiring). Invoked with a JSON payload "
+        "describing the event on stdin.",
         default=None,
     )
     deprecated_kwargs: dict[str, Any] = {}
@@ -452,13 +414,6 @@ def map_to_config(user_ns: argparse.Namespace) -> UserConfig:
         auto_delete=user_ns.auto_delete,
         folder_structure=user_ns.folder_structure,
         set_exif_datetime=user_ns.set_exif_datetime,
-        smtp_username=user_ns.smtp_username,
-        smtp_password=user_ns.smtp_password,
-        smtp_host=user_ns.smtp_host,
-        smtp_port=user_ns.smtp_port,
-        smtp_no_tls=user_ns.smtp_no_tls,
-        notification_email=user_ns.notification_email,
-        notification_email_from=user_ns.notification_email_from,
         notification_script=user_ns.notification_script,
         delete_after_download=user_ns.delete_after_download,
         keep_icloud_recent_days=user_ns.keep_icloud_recent_days,
