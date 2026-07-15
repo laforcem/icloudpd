@@ -1,19 +1,48 @@
+import contextlib
 import glob
 import io
 import os
 import shutil
 import sys
+import time
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from functools import partial
-from typing import IO, Any, Callable, List, Mapping, Protocol, Sequence, Tuple, TypeVar
+from typing import IO, Any, Callable, Iterator, List, Mapping, Protocol, Sequence, Tuple, TypeVar
 
+import tzlocal
 from vcr import VCR
 
 from foundation.core import compose, flip, partial_1_1, partial_2_1
 from icloudpd.cli import cli
 
 vcr = VCR(decode_compressed_response=True, record_mode="none")
+
+
+@contextlib.contextmanager
+def frozen_tz(tz_name: str = "UTC") -> Iterator[None]:
+    """Pin the process's local timezone for the duration of the block.
+
+    `tzlocal.get_localzone()` caches its result process-wide on first call,
+    so tests can't rely on setting the `TZ` env var alone once anything else
+    has already triggered detection - we also have to force glibc (`tzset`)
+    and tzlocal to re-resolve, then undo both on the way out.
+    """
+    original_tz = os.environ.get("TZ")
+    os.environ["TZ"] = tz_name
+    if hasattr(time, "tzset"):
+        time.tzset()
+    tzlocal.reload_localzone()
+    try:
+        yield
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        if hasattr(time, "tzset"):
+            time.tzset()
+        tzlocal.reload_localzone()
 
 
 class TestResult:
@@ -179,6 +208,10 @@ def run_main_env(
                 del os.environ[key]
         else:
             os.environ[key] = value
+    if "TZ" in env:
+        if hasattr(time, "tzset"):
+            time.tzset()
+        tzlocal.reload_localzone()
 
     # Capture stdout and stderr
     stdout_capture = io.StringIO()
@@ -263,6 +296,10 @@ def run_main_env(
                     del os.environ[key]
             else:
                 os.environ[key] = original_value
+        if "TZ" in env:
+            if hasattr(time, "tzset"):
+                time.tzset()
+            tzlocal.reload_localzone()
 
     # Clean the output to remove log prefixes for compatibility with old tests
     raw_output = stdout_capture.getvalue()
@@ -308,10 +345,14 @@ def run_with_cassette(cassette_path: str, f: Callable[[_T_contra], _T_co], inp: 
 
 
 def run_cassette(
-    cassette_path: str, params: Sequence[str], input: str | bytes | IO[Any] | None = None
+    cassette_path: str,
+    params: Sequence[str],
+    input: str | bytes | IO[Any] | None = None,
+    additional_env: Mapping[str, str | None] = {},
 ) -> TestResult:
+    combined_env: Mapping[str, str | None] = {**additional_env, **DEFAULT_ENV}
     with vcr.use_cassette(cassette_path):
-        return print_result_exception(run_main_env(DEFAULT_ENV, params, input))
+        return print_result_exception(run_main_env(combined_env, params, input))
 
 
 _path_join_flipped = flip(os.path.join)

@@ -2226,6 +2226,7 @@ class DownloadPhotoNameIDTestCase(TestCase):
                 "--skip-created-before",
                 "2018-07-31",
             ],
+            additional_env={"TZ": "UTC"},
         )
 
         assert result.exit_code == 0
@@ -2315,6 +2316,7 @@ class DownloadPhotoNameIDTestCase(TestCase):
                 "--skip-created-after",
                 "2018-07-31",
             ],
+            additional_env={"TZ": "UTC"},
         )
 
         assert result.exit_code == 0
