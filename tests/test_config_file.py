@@ -111,3 +111,78 @@ def test_coerce_list_elements_lowercased() -> None:
 def test_coerce_invalid_timestamp_raises() -> None:
     with pytest.raises(ConfigFileError, match="did not parse"):
         _coerce_scalar_fields({"skip_created_before": "not-a-date"})
+
+
+def test_load_config_file_rejects_unknown_key_in_app(tmp_path: pathlib.Path) -> None:
+    path = _write(
+        tmp_path,
+        """
+app:
+  bogus_option: 1
+users:
+  - username: you@icloud.com
+""",
+    )
+    with pytest.raises(ConfigFileError, match="app") as excinfo:
+        load_config_file(path)
+    assert "bogus_option" in str(excinfo.value)
+
+
+def test_load_config_file_rejects_unknown_key_in_all_users(tmp_path: pathlib.Path) -> None:
+    path = _write(
+        tmp_path,
+        """
+all_users:
+  directroy: /data
+users:
+  - username: you@icloud.com
+""",
+    )
+    with pytest.raises(ConfigFileError, match="all_users") as excinfo:
+        load_config_file(path)
+    assert "directroy" in str(excinfo.value)
+
+
+def test_load_config_file_rejects_unknown_key_in_user_entry(tmp_path: pathlib.Path) -> None:
+    path = _write(
+        tmp_path,
+        """
+users:
+  - username: you@icloud.com
+    directroy: /data
+""",
+    )
+    with pytest.raises(ConfigFileError, match=r"users\[0\]") as excinfo:
+        load_config_file(path)
+    assert "directroy" in str(excinfo.value)
+
+
+def test_load_config_file_rejects_norway_problem_for_string_field(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = _write(
+        tmp_path,
+        """
+users:
+  - username: you@icloud.com
+    directory: /data
+    library: no
+""",
+    )
+    with pytest.raises(ConfigFileError, match="library") as excinfo:
+        load_config_file(path)
+    assert "quote" in str(excinfo.value).lower()
+
+
+def test_load_config_file_allows_legitimate_bool_field(tmp_path: pathlib.Path) -> None:
+    path = _write(
+        tmp_path,
+        """
+users:
+  - username: you@icloud.com
+    directory: /data
+    skip_videos: no
+""",
+    )
+    result = load_config_file(path)
+    assert result.users[0]["skip_videos"] is False

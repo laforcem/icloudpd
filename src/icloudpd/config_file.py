@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Sequence
 
 import yaml
 
+from icloudpd.config_defaults import GLOBAL_OPTION_DEFAULTS, USER_OPTION_DEFAULTS
 from icloudpd.string_helpers import parse_timestamp_or_timedelta
 
 KNOWN_TOP_LEVEL_SECTIONS = {"app", "all_users", "users"}
@@ -29,6 +30,34 @@ _LOWERCASE_FIELDS = {
     "live_photo_mov_filename_policy",
     "align_raw",
     "file_match_policy",
+}
+
+# Keys allowed under `app` (GlobalConfig fields), and under `all_users`/each
+# `users[]` entry (UserConfig fields, plus the two fields that only exist in
+# the config file's user shape).
+_ALLOWED_APP_KEYS = set(GLOBAL_OPTION_DEFAULTS.keys())
+_ALLOWED_USER_KEYS = set(USER_OPTION_DEFAULTS.keys()) | {"username", "password_file"}
+
+# Fields that are legitimately typed as `bool` on GlobalConfig/UserConfig
+# (see src/icloudpd/config.py). Any *other* field that comes back from YAML
+# as a Python bool is almost certainly the "Norway problem": an unquoted
+# yes/no/on/off/true/false value that YAML 1.1 silently coerced to a bool
+# instead of the string the user meant.
+_GLOBAL_BOOL_FIELDS = {"use_os_locale", "only_print_filenames", "no_progress_bar"}
+_USER_BOOL_FIELDS = {
+    "auth_only",
+    "list_albums",
+    "list_libraries",
+    "skip_videos",
+    "skip_live_photos",
+    "xmp_sidecar",
+    "force_size",
+    "auto_delete",
+    "set_exif_datetime",
+    "delete_after_download",
+    "dry_run",
+    "keep_unicode_in_filenames",
+    "skip_photos",
 }
 
 
@@ -78,6 +107,28 @@ def _validate_user_entry(entry: Dict[str, Any], index: int) -> None:
         raise ConfigFileError(f"users[{index}]: `username` is required for every account")
 
 
+def _validate_known_keys(
+    location: str, entry: Dict[str, Any], allowed: set[str]
+) -> None:
+    unknown = sorted(set(entry.keys()) - allowed)
+    if unknown:
+        raise ConfigFileError(
+            f"{location}: unknown key(s) {unknown!r}; check for typos. "
+            f"Recognized keys: {sorted(allowed)!r}"
+        )
+
+
+def _validate_bool_mistyping(location: str, entry: Dict[str, Any], bool_fields: set[str]) -> None:
+    for field, value in entry.items():
+        if isinstance(value, bool) and field not in bool_fields:
+            raise ConfigFileError(
+                f"{location}: `{field}` was parsed as the YAML boolean {value!r}, but this "
+                "field expects a string/other value, not true/false. This is usually the "
+                "YAML \"Norway problem\": unquoted words like yes/no/on/off/true/false are "
+                f"parsed as booleans. Quote the value instead, e.g. `{field}: \"{'yes' if value else 'no'}\"`."
+            )
+
+
 def load_config_file(path: str) -> RawConfigFile:
     try:
         with open(path, encoding="utf-8") as f:
@@ -96,12 +147,20 @@ def load_config_file(path: str) -> RawConfigFile:
         )
 
     app = _coerce_scalar_fields(raw.get("app") or {})
+    _validate_known_keys("app", app, _ALLOWED_APP_KEYS)
+    _validate_bool_mistyping("app", app, _GLOBAL_BOOL_FIELDS)
+
     all_users = _coerce_scalar_fields(raw.get("all_users") or {})
+    _validate_known_keys("all_users", all_users, _ALLOWED_USER_KEYS)
+    _validate_bool_mistyping("all_users", all_users, _USER_BOOL_FIELDS)
 
     users: List[Dict[str, Any]] = []
     for index, entry in enumerate(raw.get("users") or []):
         _validate_user_entry(entry, index)
-        users.append(_coerce_scalar_fields(entry))
+        coerced_entry = _coerce_scalar_fields(entry)
+        _validate_known_keys(f"users[{index}]", coerced_entry, _ALLOWED_USER_KEYS)
+        _validate_bool_mistyping(f"users[{index}]", coerced_entry, _USER_BOOL_FIELDS)
+        users.append(coerced_entry)
 
     return RawConfigFile(app=app, all_users=all_users, users=users)
 

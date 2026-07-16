@@ -16,7 +16,12 @@ from foundation.string_utils import lower
 from icloudpd.base import ensure_tzinfo, run_with_configs
 from icloudpd.config import GlobalConfig, UserConfig
 from icloudpd.config_defaults import GLOBAL_OPTION_DEFAULTS, USER_OPTION_DEFAULTS
-from icloudpd.config_file import dump_resolved_config, load_config_file, merge_user_dict
+from icloudpd.config_file import (
+    ConfigFileError,
+    dump_resolved_config,
+    load_config_file,
+    merge_user_dict,
+)
 from icloudpd.log_level import LogLevel
 from icloudpd.mfa_provider import MFAProvider
 from icloudpd.password_provider import PasswordProvider
@@ -651,7 +656,7 @@ def _resolved_config_as_dicts(
 def cli() -> int:
     try:
         global_ns, user_nses = parse(sys.argv[1:])
-    except argparse.ArgumentError as error:
+    except (argparse.ArgumentError, ConfigFileError) as error:
         print(error)
         return 2
     if "--print-config" in sys.argv:

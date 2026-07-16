@@ -686,3 +686,25 @@ def test_print_config_prints_resolved_yaml_and_returns_zero(
     assert parsed["users"][0]["username"] == "you@icloud.com"
     assert parsed["users"][0]["directory"] == "/data"
     assert parsed["app"]["mfa_provider"] == "console"
+
+
+def test_cli_reports_clear_error_for_malformed_config_file(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("app: [unterminated")
+
+    import sys as _sys
+
+    from icloudpd.cli import cli as cli_entrypoint
+
+    old_argv = _sys.argv
+    _sys.argv = ["icloudpd", "--config", str(config_path)]
+    try:
+        exit_code = cli_entrypoint()
+    finally:
+        _sys.argv = old_argv
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "failed to parse YAML" in captured.out or "failed to parse YAML" in captured.err
