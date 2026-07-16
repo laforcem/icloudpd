@@ -1,10 +1,12 @@
+import logging
 import os
+from unittest import mock
 
 from flask.testing import FlaskClient
 
 from icloudpd.config import UserConfig
 from icloudpd.logger import setup_logger
-from icloudpd.server import build_app
+from icloudpd.server import build_app, serve_app
 from icloudpd.status import Status, StatusExchange
 from pyicloud_ipd.file_match import FileMatchPolicy
 from pyicloud_ipd.live_photo_mov_filename_policy import LivePhotoMovFilenamePolicy
@@ -185,3 +187,20 @@ def test_force_reauth_rejects_missing_username() -> None:
     response = client.post("/force-reauth", data={})
 
     assert response.status_code == 400
+
+
+def test_serve_app_logs_url_before_blocking_on_waitress(caplog: object) -> None:
+    status_exchange = StatusExchange()
+    logger = setup_logger()
+
+    with (
+        mock.patch("icloudpd.server.waitress.serve") as mock_serve,
+        caplog.at_level(logging.INFO, logger=logger.name),  # type: ignore[attr-defined]
+    ):
+        serve_app(logger, status_exchange, host="0.0.0.0", port=9090)
+
+    assert "http://localhost:9090/" in caplog.text  # type: ignore[attr-defined]
+    mock_serve.assert_called_once()
+    _, kwargs = mock_serve.call_args
+    assert kwargs["host"] == "0.0.0.0"
+    assert kwargs["port"] == 9090

@@ -18,7 +18,7 @@ def load_config() -> BotConfig:
     allowed_chat_ids = frozenset(
         int(chat_id.strip()) for chat_id in raw_chat_ids.split(",") if chat_id.strip()
     )
-    icloudpd_base_url = os.environ.get("ICLOUDPD_BASE_URL", "http://icloudpd:8080")
+    icloudpd_base_url = os.environ.get("ICLOUDPD_BASE_URL", "http://icloudpd:2011")
     notify_listener_port = int(os.environ.get("NOTIFY_LISTENER_PORT", "8090"))
     return BotConfig(
         bot_token=bot_token,

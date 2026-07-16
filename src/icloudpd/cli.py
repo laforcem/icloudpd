@@ -336,6 +336,12 @@ def add_global_options(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
         default="console",
         type=lower,
     )
+    cloned.add_argument(
+        "--webui-port",
+        help="Port for the WebUI server (used for `webui` password/MFA providers). Default: %(default)s",
+        type=int,
+        default=2011,
+    )
     return cloned
 
 
@@ -501,6 +507,7 @@ def parse(args: Sequence[str]) -> Tuple[GlobalConfig, Sequence[UserConfig]]:
                 )
             ),
             mfa_provider=MFAProvider(global_ns.mfa_provider),
+            webui_port=global_ns.webui_port,
         ),
         user_nses,
     )

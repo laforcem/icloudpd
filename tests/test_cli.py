@@ -92,6 +92,7 @@ class CliTestCase(TestCase):
                             PasswordProvider.CONSOLE,
                         ],
                         mfa_provider=MFAProvider.CONSOLE,
+                        webui_port=2011,
                     ),
                     [],
                 ),
@@ -116,6 +117,7 @@ class CliTestCase(TestCase):
                             PasswordProvider.CONSOLE,
                         ],
                         mfa_provider=MFAProvider.WEBUI,
+                        webui_port=2011,
                     ),
                     [],
                 ),
@@ -145,6 +147,7 @@ class CliTestCase(TestCase):
                         watch_with_interval=None,
                         password_providers=[PasswordProvider.WEBUI, PasswordProvider.CONSOLE],
                         mfa_provider=MFAProvider.CONSOLE,
+                        webui_port=2011,
                     ),
                     [],
                 ),
@@ -169,6 +172,7 @@ class CliTestCase(TestCase):
                             PasswordProvider.CONSOLE,
                         ],
                         mfa_provider=MFAProvider.CONSOLE,
+                        webui_port=2011,
                     ),
                     [],
                 ),
@@ -195,6 +199,7 @@ class CliTestCase(TestCase):
                             PasswordProvider.CONSOLE,
                         ],
                         mfa_provider=MFAProvider.CONSOLE,
+                        webui_port=2011,
                     ),
                     [
                         UserConfig(
@@ -297,6 +302,7 @@ class CliTestCase(TestCase):
                             PasswordProvider.CONSOLE,
                         ],
                         mfa_provider=MFAProvider.CONSOLE,
+                        webui_port=2011,
                     ),
                     [
                         UserConfig(
@@ -555,3 +561,15 @@ def test_session_expiry_options_default_values() -> None:
     _global_config, user_configs = parse(["--directory", "abc", "--username", "u1"])
     assert user_configs[0].session_expiry_warning_days == 7
     assert user_configs[0].session_expiry_notification_interval_hours == 24
+
+
+def test_webui_port_default_value() -> None:
+    global_config, _user_configs = parse(["--directory", "abc", "--username", "u1"])
+    assert global_config.webui_port == 2011
+
+
+def test_webui_port_custom_value() -> None:
+    global_config, _user_configs = parse(
+        ["--directory", "abc", "--username", "u1", "--webui-port", "9999"]
+    )
+    assert global_config.webui_port == 9999

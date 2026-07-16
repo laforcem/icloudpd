@@ -24,7 +24,7 @@ def test_load_config_defaults_base_url_and_port(monkeypatch: pytest.MonkeyPatch)
 
     config = load_config()
 
-    assert config.icloudpd_base_url == "http://icloudpd:8080"
+    assert config.icloudpd_base_url == "http://icloudpd:2011"
     assert config.notify_listener_port == 8090
 
 
