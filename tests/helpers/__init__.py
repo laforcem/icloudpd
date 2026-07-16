@@ -167,7 +167,6 @@ def clean_boolean_args(params: Sequence[str]) -> list[str]:
         "--force-size",
         "--auto-delete",
         "--set-exif-datetime",
-        "--smtp-no-tls",
         "--delete-after-download",
         "--dry-run",
         "--keep-unicode-in-filenames",

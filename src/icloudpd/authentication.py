@@ -143,9 +143,9 @@ def request_2sa(icloud: PyiCloudService, logger: logging.Logger) -> None:
     logger.info(
         "Great, you're all set up. The script can now be run without "
         "user interaction until 2SA expires.\n"
-        "You can set up email notifications for when "
+        "You can set up a notification script for when "
         "the two-step authentication expires.\n"
-        "(Use --help to view information about SMTP options.)"
+        "(Use --notification-script to configure this.)"
     )
 
 
@@ -241,9 +241,9 @@ def request_2fa(icloud: PyiCloudService, logger: logging.Logger) -> None:
     logger.info(
         "Great, you're all set up. The script can now be run without "
         "user interaction until 2FA expires.\n"
-        "You can set up email notifications for when "
+        "You can set up a notification script for when "
         "the two-factor authentication expires.\n"
-        "(Use --help to view information about SMTP options.)"
+        "(Use --notification-script to configure this.)"
     )
 
 
@@ -294,9 +294,9 @@ def request_2fa_web(
                 logger.info(
                     "Great, you're all set up. The script can now be run without "
                     "user interaction until 2FA expires.\n"
-                    "You can set up email notifications for when "
+                    "You can set up a notification script for when "
                     "the two-factor authentication expires.\n"
-                    "(Use --help to view information about SMTP options.)"
+                    "(Use --notification-script to configure this.)"
                 )
         else:
             raise PyiCloudFailedMFAException("Failed to change status")

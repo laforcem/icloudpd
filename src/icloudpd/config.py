@@ -32,13 +32,6 @@ class _DefaultConfig:
     auto_delete: bool
     folder_structure: str
     set_exif_datetime: bool
-    smtp_username: str | None
-    smtp_password: str | None
-    smtp_host: str
-    smtp_port: int
-    smtp_no_tls: bool
-    notification_email: str | None
-    notification_email_from: str | None
     notification_script: pathlib.Path | None
     delete_after_download: bool
     keep_icloud_recent_days: int | None
