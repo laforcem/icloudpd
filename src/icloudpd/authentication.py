@@ -66,7 +66,8 @@ def authenticator(
     status_exchange: StatusExchange,
     username: str,
     notificator: Callable[[], None],
-    notify_mfa_result: Callable[[bool, str | None], None],
+    notify_mfa_accepted: Callable[[], None],
+    notify_mfa_rejected: Callable[[str], None],
     response_observer: Callable[[Mapping[str, Any]], None] | None = None,
     cookie_directory: str | None = None,
     client_id: str | None = None,
@@ -106,7 +107,7 @@ def authenticator(
         logger.info("Two-factor authentication is required (2fa)")
         notificator()
         if mfa_provider == MFAProvider.WEBUI:
-            request_2fa_web(icloud, logger, status_exchange, notify_mfa_result)
+            request_2fa_web(icloud, logger, status_exchange, notify_mfa_accepted, notify_mfa_rejected)
         else:
             request_2fa(icloud, logger)
 
@@ -252,7 +253,8 @@ def request_2fa_web(
     icloud: PyiCloudService,
     logger: logging.Logger,
     status_exchange: StatusExchange,
-    notify_mfa_result: Callable[[bool, str | None], None],
+    notify_mfa_accepted: Callable[[], None],
+    notify_mfa_rejected: Callable[[str], None],
 ) -> None:
     """Request two-factor authentication through Webui."""
     if not status_exchange.replace_status(Status.IDLE, Status.AWAITING_MFA_TRIGGER):
@@ -300,17 +302,17 @@ def request_2fa_web(
         if not icloud.validate_2fa_code(code):
             error = "Failed to verify two-factor authentication code"
             # Notify before flipping status: set_error() below unblocks the bot to
-            # retry immediately, and notify_mfa_result() is a blocking subprocess
+            # retry immediately, and notify_mfa_rejected() is a blocking subprocess
             # call (up to 10s). Flipping first would let a fast retry's waiter
             # steal this stale failure notification once it finally lands.
-            notify_mfa_result(False, error)
+            notify_mfa_rejected(error)
             if not status_exchange.set_error(error):
                 raise PyiCloudFailedMFAException("Failed to change status of invalid code")
             # dropped back to AWAITING_MFA_TRIGGER; loop and wait for another explicit trigger
             continue
 
         status_exchange.replace_status(Status.VALIDATING_MFA_CODE, Status.IDLE)  # done
-        notify_mfa_result(True, None)
+        notify_mfa_accepted()
         logger.info(
             "Great, you're all set up. The script can now be run without "
             "user interaction until 2FA expires.\n"

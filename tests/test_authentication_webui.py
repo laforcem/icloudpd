@@ -1,6 +1,6 @@
 import threading
 import time
-from typing import List, Tuple
+from typing import List
 from unittest import mock
 
 from icloudpd.authentication import request_2fa_web
@@ -23,7 +23,7 @@ def test_does_not_trigger_push_until_asked() -> None:
 
     thread = threading.Thread(
         target=request_2fa_web,
-        args=(icloud, logger, status_exchange, lambda success, error: None),
+        args=(icloud, logger, status_exchange, lambda: None, lambda error: None),
         daemon=True,
     )
     thread.start()
@@ -43,7 +43,7 @@ def test_successful_code_after_explicit_trigger() -> None:
 
     thread = threading.Thread(
         target=request_2fa_web,
-        args=(icloud, logger, status_exchange, lambda success, error: None),
+        args=(icloud, logger, status_exchange, lambda: None, lambda error: None),
         daemon=True,
     )
     thread.start()
@@ -71,7 +71,7 @@ def test_failed_code_drops_back_to_awaiting_trigger() -> None:
 
     thread = threading.Thread(
         target=request_2fa_web,
-        args=(icloud, logger, status_exchange, lambda success, error: None),
+        args=(icloud, logger, status_exchange, lambda: None, lambda error: None),
         daemon=True,
     )
     thread.start()
@@ -95,18 +95,22 @@ def test_failed_code_drops_back_to_awaiting_trigger() -> None:
     assert icloud.trigger_push_notification.call_count == 2
 
 
-def test_successful_code_notifies_mfa_result_success() -> None:
+def test_successful_code_notifies_mfa_accepted() -> None:
     status_exchange = StatusExchange()
     icloud = make_icloud([True])
     logger = setup_logger()
-    notified: List[Tuple[bool, str | None]] = []
+    accepted: List[None] = []
+    rejected: List[str] = []
 
-    def notify_mfa_result(success: bool, error: str | None) -> None:
-        notified.append((success, error))
+    def notify_mfa_accepted() -> None:
+        accepted.append(None)
+
+    def notify_mfa_rejected(error: str) -> None:
+        rejected.append(error)
 
     thread = threading.Thread(
         target=request_2fa_web,
-        args=(icloud, logger, status_exchange, notify_mfa_result),
+        args=(icloud, logger, status_exchange, notify_mfa_accepted, notify_mfa_rejected),
         daemon=True,
     )
     thread.start()
@@ -118,21 +122,26 @@ def test_successful_code_notifies_mfa_result_success() -> None:
     thread.join(timeout=2.0)
 
     assert status_exchange.get_status() == Status.IDLE
-    assert notified == [(True, None)]
+    assert accepted == [None]
+    assert rejected == []
 
 
-def test_failed_code_notifies_mfa_result_failure() -> None:
+def test_failed_code_notifies_mfa_rejected() -> None:
     status_exchange = StatusExchange()
     icloud = make_icloud([False, True])
     logger = setup_logger()
-    notified: List[Tuple[bool, str | None]] = []
+    accepted: List[None] = []
+    rejected: List[str] = []
 
-    def notify_mfa_result(success: bool, error: str | None) -> None:
-        notified.append((success, error))
+    def notify_mfa_accepted() -> None:
+        accepted.append(None)
+
+    def notify_mfa_rejected(error: str) -> None:
+        rejected.append(error)
 
     thread = threading.Thread(
         target=request_2fa_web,
-        args=(icloud, logger, status_exchange, notify_mfa_result),
+        args=(icloud, logger, status_exchange, notify_mfa_accepted, notify_mfa_rejected),
         daemon=True,
     )
     thread.start()
@@ -143,37 +152,39 @@ def test_failed_code_notifies_mfa_result_failure() -> None:
     status_exchange.set_payload("000000")
     wait_for_status(status_exchange, Status.AWAITING_MFA_TRIGGER)
 
-    assert notified == [(False, "Failed to verify two-factor authentication code")]
+    assert rejected == ["Failed to verify two-factor authentication code"]
+    assert accepted == []
 
     status_exchange.trigger_mfa()
     wait_for_status(status_exchange, Status.AWAITING_MFA_CODE)
     status_exchange.set_payload("123456")
     thread.join(timeout=2.0)
-    assert notified == [
-        (False, "Failed to verify two-factor authentication code"),
-        (True, None),
-    ]
+    assert rejected == ["Failed to verify two-factor authentication code"]
+    assert accepted == [None]
 
 
 def test_failed_code_notifies_before_flipping_status_back() -> None:
-    # notify_mfa_result() can be slow in production (a blocking subprocess +
+    # notify_mfa_rejected() can be slow in production (a blocking subprocess +
     # network call, up to ~10s). If the status flip to AWAITING_MFA_TRIGGER
     # happened first, a fast retry could start before that stale failure
     # notification is delivered, and a single-slot waiter (see the bot's
     # MfaResultWaiter) would misattribute it to the new attempt. Pin the
-    # ordering: notify_mfa_result() must be called while still
+    # ordering: notify_mfa_rejected() must be called while still
     # VALIDATING_MFA_CODE, before the status has flipped back.
     status_exchange = StatusExchange()
     icloud = make_icloud([False, True])
     logger = setup_logger()
     status_at_notify_time: List[Status] = []
 
-    def notify_mfa_result(success: bool, error: str | None) -> None:
+    def notify_mfa_accepted() -> None:
+        pass
+
+    def notify_mfa_rejected(error: str) -> None:
         status_at_notify_time.append(status_exchange.get_status())
 
     thread = threading.Thread(
         target=request_2fa_web,
-        args=(icloud, logger, status_exchange, notify_mfa_result),
+        args=(icloud, logger, status_exchange, notify_mfa_accepted, notify_mfa_rejected),
         daemon=True,
     )
     thread.start()

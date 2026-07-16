@@ -1,7 +1,7 @@
 import inspect
 import os
 import threading
-from typing import List, Tuple
+from typing import List
 from unittest import TestCase
 
 import pytest
@@ -52,7 +52,8 @@ class WebuiAuthFlowIntegrationTestCase(TestCase):
         status_exchange = StatusExchange()
         status_exchange.set_current_user(USERNAME)
         logger = setup_logger()
-        notified: List[Tuple[bool, str | None]] = []
+        accepted: List[None] = []
+        rejected: List[str] = []
         errors: List[BaseException] = []
 
         def run_authenticator() -> None:
@@ -66,7 +67,8 @@ class WebuiAuthFlowIntegrationTestCase(TestCase):
                         status_exchange,
                         USERNAME,
                         lambda: None,
-                        lambda success, error: notified.append((success, error)),
+                        lambda: accepted.append(None),
+                        lambda error: rejected.append(error),
                         None,
                         cookie_dir,
                         CLIENT_ID,
@@ -95,7 +97,8 @@ class WebuiAuthFlowIntegrationTestCase(TestCase):
         assert not thread.is_alive(), "authenticator thread did not finish"
         assert errors == []
         assert status_exchange.get_status() == Status.IDLE
-        assert notified == [(True, None)]
+        assert accepted == [None]
+        assert rejected == []
 
     def test_full_auth_flow_via_webui_invalid_code(self) -> None:
         base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
@@ -106,7 +109,8 @@ class WebuiAuthFlowIntegrationTestCase(TestCase):
         status_exchange = StatusExchange()
         status_exchange.set_current_user(USERNAME)
         logger = setup_logger()
-        notified: List[Tuple[bool, str | None]] = []
+        accepted: List[None] = []
+        rejected: List[str] = []
         errors: List[BaseException] = []
 
         def run_authenticator() -> None:
@@ -120,7 +124,8 @@ class WebuiAuthFlowIntegrationTestCase(TestCase):
                         status_exchange,
                         USERNAME,
                         lambda: None,
-                        lambda success, error: notified.append((success, error)),
+                        lambda: accepted.append(None),
+                        lambda error: rejected.append(error),
                         None,
                         cookie_dir,
                         CLIENT_ID,
@@ -152,4 +157,5 @@ class WebuiAuthFlowIntegrationTestCase(TestCase):
 
         assert errors == []
         assert status_exchange.get_error() == "Failed to verify two-factor authentication code"
-        assert notified == [(False, "Failed to verify two-factor authentication code")]
+        assert accepted == []
+        assert rejected == ["Failed to verify two-factor authentication code"]

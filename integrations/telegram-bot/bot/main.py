@@ -47,15 +47,16 @@ async def run() -> None:
         for chat_id in config.allowed_chat_ids:
             await bot.send_message(chat_id, text, reply_markup=force_reauth_keyboard(username))
 
-    async def on_mfa_result(event: dict[str, Any]) -> None:
-        data = event.get("data", {})
-        waiter.resolve(
-            success=bool(data.get("success")),
-            error=data.get("error"),
-            username=event.get("username"),
-        )
+    async def on_mfa_accepted(event: dict[str, Any]) -> None:
+        waiter.resolve(success=True, error=None, username=event.get("username"))
 
-    notify_app = build_notify_app(on_session_expired, on_session_expiring_soon, on_mfa_result)
+    async def on_mfa_rejected(event: dict[str, Any]) -> None:
+        data = event.get("data", {})
+        waiter.resolve(success=False, error=data.get("error"), username=event.get("username"))
+
+    notify_app = build_notify_app(
+        on_session_expired, on_session_expiring_soon, on_mfa_accepted, on_mfa_rejected
+    )
     runner = web.AppRunner(notify_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", config.notify_listener_port)
