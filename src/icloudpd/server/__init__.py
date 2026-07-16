@@ -134,6 +134,11 @@ def build_app(logger: Logger, _status_exchange: StatusExchange) -> Flask:
     return app
 
 
-def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
-    logger.debug("Starting web server...")
-    return waitress.serve(build_app(logger, _status_exchange))
+def serve_app(
+    logger: Logger,
+    _status_exchange: StatusExchange,
+    host: str = "0.0.0.0",
+    port: int = 2011,
+) -> None:
+    logger.info("Open http://localhost:%d/ to enter your password or MFA code.", port)
+    return waitress.serve(build_app(logger, _status_exchange), host=host, port=port)

@@ -26,7 +26,7 @@ services:
     environment:
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
       TELEGRAM_ALLOWED_CHAT_IDS: "${TELEGRAM_ALLOWED_CHAT_IDS}"
-      ICLOUDPD_BASE_URL: "http://icloudpd:8080"
+      ICLOUDPD_BASE_URL: "http://icloudpd:2011"
     networks:
       - icloudpd-net
 
