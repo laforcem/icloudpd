@@ -41,6 +41,7 @@ from icloudpd import download, exif_datetime, manifest, notifications, session_e
 from icloudpd.authentication import authenticator
 from icloudpd.autodelete import autodelete_photos
 from icloudpd.config import GlobalConfig, UserConfig
+from icloudpd.config_file import ConfigFileError
 from icloudpd.counter import Counter
 from icloudpd.filename_policies import build_filename_with_policies, create_filename_builder
 from icloudpd.log_level import LogLevel
@@ -181,10 +182,22 @@ def resolve_constant_password(password: str | None, password_file: str | None) -
     supported by the YAML config file (see config_file.py), so any config-file
     -driven run reaches this via `password_file`. `password` remains for
     direct CLI (`-p`/`--password`) use, unchanged from today's behavior.
+
+    Note: this reads `password_file` fresh each time it's called. In watch
+    mode (`--watch-with-interval`), that means each watch cycle re-reads the
+    file rather than reading it once at process startup — harmless in
+    practice (same result each time, no rotation is implemented per the
+    design's non-goals), but worth knowing if you're reasoning about when
+    the file is actually accessed.
     """
     if password_file is not None:
-        with open(password_file, encoding="utf-8") as f:
-            return f.read().rstrip("\n")
+        try:
+            with open(password_file, encoding="utf-8") as f:
+                return f.read().rstrip("\n")
+        except OSError as e:
+            raise ConfigFileError(
+                f"password_file {password_file!r} could not be read: {e}"
+            ) from e
     return password
 
 
