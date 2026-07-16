@@ -5,6 +5,7 @@ import pytest
 from icloudpd.config_file import (
     ConfigFileError,
     RawConfigFile,
+    _coerce_scalar_fields,
     load_config_file,
     merge_user_dict,
 )
@@ -89,3 +90,24 @@ def test_merge_user_dict_overrides_all_users_per_field() -> None:
         "skip_videos": True,
         "username": "partner@icloud.com",
     }
+
+
+def test_load_config_file_rejects_malformed_yaml(tmp_path: pathlib.Path) -> None:
+    path = _write(tmp_path, "app: [unterminated")
+    with pytest.raises(ConfigFileError, match="failed to parse YAML"):
+        load_config_file(path)
+
+
+def test_coerce_lowercase_fields() -> None:
+    result = _coerce_scalar_fields({"log_level": "DEBUG", "mfa_provider": "WEBUI"})
+    assert result == {"log_level": "debug", "mfa_provider": "webui"}
+
+
+def test_coerce_list_elements_lowercased() -> None:
+    result = _coerce_scalar_fields({"sizes": ["ORIGINAL", "MEDIUM"]})
+    assert result["sizes"] == ["original", "medium"]
+
+
+def test_coerce_invalid_timestamp_raises() -> None:
+    with pytest.raises(ConfigFileError, match="did not parse"):
+        _coerce_scalar_fields({"skip_created_before": "not-a-date"})

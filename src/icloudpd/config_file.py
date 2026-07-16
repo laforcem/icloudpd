@@ -79,8 +79,11 @@ def _validate_user_entry(entry: Dict[str, Any], index: int) -> None:
 
 
 def load_config_file(path: str) -> RawConfigFile:
-    with open(path, encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise ConfigFileError(f"{path}: failed to parse YAML: {e}") from e
 
     if not isinstance(raw, dict):
         raise ConfigFileError(f"{path}: top level of the config file must be a mapping")
