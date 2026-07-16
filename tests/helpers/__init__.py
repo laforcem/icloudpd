@@ -15,8 +15,18 @@ from vcr import VCR
 
 from foundation.core import compose, flip, partial_1_1, partial_2_1
 from icloudpd.cli import cli
+from icloudpd.status import Status, StatusExchange
 
 vcr = VCR(decode_compressed_response=True, record_mode="none")
+
+
+def wait_for_status(status_exchange: StatusExchange, expected: Status, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if status_exchange.get_status() == expected:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"Timed out waiting for status {expected}, got {status_exchange.get_status()}")
 
 
 @contextlib.contextmanager

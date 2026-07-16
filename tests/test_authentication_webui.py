@@ -6,6 +6,7 @@ from unittest import mock
 from icloudpd.authentication import request_2fa_web
 from icloudpd.logger import setup_logger
 from icloudpd.status import Status, StatusExchange
+from tests.helpers import wait_for_status
 
 
 def make_icloud(validate_results: List[bool]) -> mock.Mock:
@@ -13,15 +14,6 @@ def make_icloud(validate_results: List[bool]) -> mock.Mock:
     icloud.trigger_push_notification.return_value = True
     icloud.validate_2fa_code.side_effect = validate_results
     return icloud
-
-
-def wait_for_status(status_exchange: StatusExchange, expected: Status, timeout: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if status_exchange.get_status() == expected:
-            return
-        time.sleep(0.01)
-    raise AssertionError(f"Timed out waiting for status {expected}, got {status_exchange.get_status()}")
 
 
 def test_does_not_trigger_push_until_asked() -> None:
