@@ -70,11 +70,13 @@ def test_status_json_reports_current_state() -> None:
 def test_trigger_push_moves_awaiting_trigger_to_awaiting_code() -> None:
     status_exchange = StatusExchange()
     status_exchange.replace_status(Status.IDLE, Status.AWAITING_MFA_TRIGGER)
+    status_exchange.set_current_user("jdoe@icloud.com")
     client = make_client(status_exchange)
 
     response = client.post("/trigger-push")
 
-    assert response.status_code == 204
+    assert response.status_code == 200
+    assert response.json == {"current_user": "jdoe@icloud.com"}
     assert status_exchange.get_status() == Status.AWAITING_MFA_CODE
 
 
