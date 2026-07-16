@@ -51,6 +51,7 @@ class _DefaultConfig:
 class UserConfig(_DefaultConfig):
     username: str
     password: str | None
+    password_file: str | None
 
 
 @dataclass(kw_only=True)
