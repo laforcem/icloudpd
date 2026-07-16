@@ -27,6 +27,13 @@ own Telegram chat ID.
 9. Repeat steps 4-7 once using **Exit** instead of **Try again** after a
    failure, confirming the bot goes quiet and a later "Start 2FA" tap on the
    original message still works.
+9a. Re-run steps 4-7 specifically with `--auth-only` (not a full download run)
+    and confirm the bot reports success promptly, without timing out, even
+    though icloudpd's `--auth-only` process exits within ~200ms of the code
+    being accepted. This is the scenario that originally exposed the polling
+    race in issue #15 (the bot's status poll could land after the port was
+    already closed); the fix pushes the result instead of polling for it, so
+    verify this specifically, not just a full download run.
 
 ## Proactive session-expiry warning (issue #9)
 
