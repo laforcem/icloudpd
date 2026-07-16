@@ -140,5 +140,10 @@ def serve_app(
     host: str = "0.0.0.0",
     port: int = 2011,
 ) -> None:
+    # The logger instance is shared process-wide (see create_logger() in
+    # base.py); a prior --only-print-filenames run may have left it
+    # disabled. The WebUI URL below is the one message a user actually
+    # needs to see, so make sure it isn't silently swallowed by that.
+    logger.disabled = False
     logger.info("Open http://localhost:%d/ to enter your password or MFA code.", port)
     return waitress.serve(build_app(logger, _status_exchange), host=host, port=port)
