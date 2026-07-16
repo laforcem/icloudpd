@@ -257,12 +257,15 @@ def request_2fa_web(
         )
 
     while True:
-        # wait for something (the WebUI, a bot, etc.) to ask for the push
+        # Tight poll (unlike the 1s poll in base.py's password-wait loop) so an
+        # HTTP-driven trigger (e.g. a Telegram bot tapping /trigger-push) doesn't
+        # add up to a second of visible latency before the push fires.
         while status_exchange.get_status() == Status.AWAITING_MFA_TRIGGER:
             time.sleep(0.01)
 
-        # A fast caller may already have submitted a code by the time we notice
-        # the trigger, so SUBMITTED_MFA_CODE is also an acceptable status here.
+        # A caller fast enough to submit a code between our trigger_mfa() and
+        # our next check (unrealistic for a human/bot round-trip, but possible
+        # under test) may already have moved us to SUBMITTED_MFA_CODE.
         if status_exchange.get_status() not in (Status.AWAITING_MFA_CODE, Status.SUBMITTED_MFA_CODE):
             raise PyiCloudFailedMFAException(
                 f"Unexpected status while awaiting MFA trigger: {status_exchange.get_status()}"
