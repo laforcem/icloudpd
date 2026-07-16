@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 import requests
 
-from bot.handlers import handle_exit, handle_message, handle_start_or_retry
+from bot.handlers import handle_exit, handle_force_reauth, handle_message, handle_start_or_retry
 from bot.icloudpd_client import MfaStatus
 from bot.state import ChatState
 
@@ -74,6 +74,22 @@ def make_callback(chat_id: int, data: str) -> SimpleNamespace:
 
 def make_message(chat_id: int, text: str) -> SimpleNamespace:
     return SimpleNamespace(chat=SimpleNamespace(id=chat_id), text=text, answer=AsyncMock())
+
+
+class ForceReauthClient(FakeClient):
+    def __init__(self, force_reauth_result: bool = True, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.force_reauth_result = force_reauth_result
+        self.force_reauth_calls: list[str] = []
+
+    def force_reauth(self, username: str) -> bool:
+        self.force_reauth_calls.append(username)
+        return self.force_reauth_result
+
+
+class ForceReauthRaisesClient(FakeClient):
+    def force_reauth(self, username: str) -> bool:
+        raise requests.exceptions.ConnectionError("Remote end closed connection")
 
 
 @pytest.mark.asyncio
@@ -235,3 +251,50 @@ async def test_message_still_reports_success_if_username_lookup_fails() -> None:
     message.answer.assert_awaited_once()
     assert "✅" in message.answer.await_args.args[0]
     assert state.is_awaiting_code(1) is False
+
+
+@pytest.mark.asyncio
+async def test_force_reauth_ignores_disallowed_chat() -> None:
+    client = ForceReauthClient()
+    callback = make_callback(chat_id=1, data="force_reauth:jdoe@icloud.com")
+
+    await handle_force_reauth(callback, client, allowed_chat_ids=frozenset({2}))
+
+    callback.answer.assert_awaited_once_with()
+    callback.message.answer.assert_not_called()
+    assert client.force_reauth_calls == []
+
+
+@pytest.mark.asyncio
+async def test_force_reauth_calls_client_with_embedded_username() -> None:
+    client = ForceReauthClient(force_reauth_result=True)
+    callback = make_callback(chat_id=1, data="force_reauth:jdoe@icloud.com")
+
+    await handle_force_reauth(callback, client, allowed_chat_ids=frozenset({1}))
+
+    assert client.force_reauth_calls == ["jdoe@icloud.com"]
+    callback.answer.assert_awaited_once()
+    callback.message.answer.assert_awaited_once()
+    assert "jdoe@icloud.com" in callback.message.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_force_reauth_alerts_when_username_unknown() -> None:
+    client = ForceReauthClient(force_reauth_result=False)
+    callback = make_callback(chat_id=1, data="force_reauth:unknown@icloud.com")
+
+    await handle_force_reauth(callback, client, allowed_chat_ids=frozenset({1}))
+
+    callback.answer.assert_awaited_once()
+    callback.message.answer.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_force_reauth_alerts_on_connection_error() -> None:
+    client = ForceReauthRaisesClient()
+    callback = make_callback(chat_id=1, data="force_reauth:jdoe@icloud.com")
+
+    await handle_force_reauth(callback, client, allowed_chat_ids=frozenset({1}))
+
+    callback.answer.assert_awaited_once()
+    callback.message.answer.assert_not_called()
