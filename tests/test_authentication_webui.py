@@ -127,3 +127,37 @@ def test_successful_code_notifies_mfa_result_success() -> None:
 
     assert status_exchange.get_status() == Status.IDLE
     assert notified == [(True, None)]
+
+
+def test_failed_code_notifies_mfa_result_failure() -> None:
+    status_exchange = StatusExchange()
+    icloud = make_icloud([False, True])
+    logger = setup_logger()
+    notified: List[tuple] = []
+
+    def notify_mfa_result(success: bool, error: str | None) -> None:
+        notified.append((success, error))
+
+    thread = threading.Thread(
+        target=request_2fa_web,
+        args=(icloud, logger, status_exchange, notify_mfa_result),
+        daemon=True,
+    )
+    thread.start()
+
+    wait_for_status(status_exchange, Status.AWAITING_MFA_TRIGGER)
+    status_exchange.trigger_mfa()
+    wait_for_status(status_exchange, Status.AWAITING_MFA_CODE)
+    status_exchange.set_payload("000000")
+    wait_for_status(status_exchange, Status.AWAITING_MFA_TRIGGER)
+
+    assert notified == [(False, "Failed to verify two-factor authentication code")]
+
+    status_exchange.trigger_mfa()
+    wait_for_status(status_exchange, Status.AWAITING_MFA_CODE)
+    status_exchange.set_payload("123456")
+    thread.join(timeout=2.0)
+    assert notified == [
+        (False, "Failed to verify two-factor authentication code"),
+        (True, None),
+    ]
