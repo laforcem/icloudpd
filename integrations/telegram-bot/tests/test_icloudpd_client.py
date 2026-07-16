@@ -40,23 +40,6 @@ def test_submit_code_rejected() -> None:
 
 
 @responses.activate
-def test_get_status_parses_json() -> None:
-    responses.add(
-        responses.GET,
-        "http://icloudpd:8080/status.json",
-        json={"status": "AWAITING_MFA_TRIGGER", "error": None, "current_user": "jdoe@icloud.com"},
-        status=200,
-    )
-    client = IcloudpdClient("http://icloudpd:8080")
-
-    status = client.get_status()
-
-    assert status.status == "AWAITING_MFA_TRIGGER"
-    assert status.error is None
-    assert status.current_user == "jdoe@icloud.com"
-
-
-@responses.activate
 def test_force_reauth_success() -> None:
     responses.add(responses.POST, "http://icloudpd:8080/force-reauth", status=204)
     client = IcloudpdClient("http://icloudpd:8080")

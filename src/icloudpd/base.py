@@ -428,8 +428,15 @@ def _process_all_users_once(
                 str(user_config.notification_script) if user_config.notification_script else None,
             )
 
-            notify_mfa_result = partial(
-                mfa_result_notificator_builder,
+            notify_mfa_accepted = partial(
+                mfa_accepted_notificator_builder,
+                logger,
+                user_config.username,
+                str(user_config.notification_script) if user_config.notification_script else None,
+            )
+
+            notify_mfa_rejected = partial(
+                mfa_rejected_notificator_builder,
                 logger,
                 user_config.username,
                 str(user_config.notification_script) if user_config.notification_script else None,
@@ -446,7 +453,8 @@ def _process_all_users_once(
                 passer,
                 downloader,
                 notificator,
-                notify_mfa_result,
+                notify_mfa_accepted,
+                notify_mfa_rejected,
                 lp_filename_generator,
             )
 
@@ -477,23 +485,30 @@ def notificator_builder(
     notifications.notify(logger, notification_script, event)
 
 
-def mfa_result_notificator_builder(
+def mfa_accepted_notificator_builder(
     logger: logging.Logger,
     username: str,
     notification_script: str | None,
-    success: bool,
-    error: str | None,
 ) -> None:
-    message = (
-        f"{username}'s two-factor authentication code was accepted."
-        if success
-        else f"{username}'s two-factor authentication code was rejected: {error}"
-    )
     event = notifications.build_event(
-        event_type="mfa_result",
+        event_type="mfa_accepted",
         username=username,
-        message=message,
-        data={"success": success, "error": error},
+        message=f"{username}'s two-factor authentication code was accepted.",
+    )
+    notifications.notify(logger, notification_script, event)
+
+
+def mfa_rejected_notificator_builder(
+    logger: logging.Logger,
+    username: str,
+    notification_script: str | None,
+    error: str,
+) -> None:
+    event = notifications.build_event(
+        event_type="mfa_rejected",
+        username=username,
+        message=f"{username}'s two-factor authentication code was rejected: {error}",
+        data={"error": error},
     )
     notifications.notify(logger, notification_script, event)
 
@@ -908,7 +923,8 @@ def core_single_run(
         [manifest.ManifestHandle | None, PyiCloudService, Counter, PhotoAsset], bool
     ],
     notificator: Callable[[], None],
-    notify_mfa_result: Callable[[bool, str | None], None],
+    notify_mfa_accepted: Callable[[], None],
+    notify_mfa_rejected: Callable[[str], None],
     lp_filename_generator: Callable[[str], str],
 ) -> int:
     """Download all iCloud photos to a local directory for a single execution (no watch loop)"""
@@ -936,7 +952,8 @@ def core_single_run(
                 status_exchange,
                 user_config.username,
                 notificator,
-                notify_mfa_result,
+                notify_mfa_accepted,
+                notify_mfa_rejected,
                 partial(append_response, captured_responses),
                 user_config.cookie_directory,
                 os.environ.get("CLIENT_ID"),

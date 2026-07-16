@@ -13,7 +13,8 @@ NotifyHandler = Callable[[dict[str, Any]], Awaitable[None]]
 def build_notify_app(
     on_session_expired: NotifyHandler,
     on_session_expiring_soon: NotifyHandler,
-    on_mfa_result: NotifyHandler,
+    on_mfa_accepted: NotifyHandler,
+    on_mfa_rejected: NotifyHandler,
 ) -> web.Application:
     app = web.Application()
 
@@ -24,8 +25,10 @@ def build_notify_app(
             await on_session_expired(event)
         elif event_type == "session_expiring_soon":
             await on_session_expiring_soon(event)
-        elif event_type == "mfa_result":
-            await on_mfa_result(event)
+        elif event_type == "mfa_accepted":
+            await on_mfa_accepted(event)
+        elif event_type == "mfa_rejected":
+            await on_mfa_rejected(event)
         else:
             logger.debug("Ignoring unhandled event_type=%s", event_type)
         return web.Response(status=204)
