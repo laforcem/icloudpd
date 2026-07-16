@@ -1,0 +1,52 @@
+from bot.icloudpd_client import MfaStatus
+from bot.mfa_result import wait_for_mfa_result
+
+
+class FakeClient:
+    def __init__(self, statuses: list[MfaStatus]) -> None:
+        self._statuses = statuses
+
+    def get_status(self) -> MfaStatus:
+        if len(self._statuses) > 1:
+            return self._statuses.pop(0)
+        return self._statuses[0]
+
+
+def test_success_when_status_becomes_idle() -> None:
+    client = FakeClient(
+        [
+            MfaStatus("VALIDATING_MFA_CODE", None, "jdoe@icloud.com"),
+            MfaStatus("IDLE", None, "jdoe@icloud.com"),
+        ]
+    )
+
+    success, error = wait_for_mfa_result(client, poll_interval=0, sleep=lambda _s: None)
+
+    assert success is True
+    assert error is None
+
+
+def test_failure_when_status_drops_to_awaiting_trigger_with_error() -> None:
+    client = FakeClient(
+        [
+            MfaStatus(
+                "AWAITING_MFA_TRIGGER",
+                "Failed to verify two-factor authentication code",
+                "jdoe@icloud.com",
+            )
+        ]
+    )
+
+    success, error = wait_for_mfa_result(client, poll_interval=0, sleep=lambda _s: None)
+
+    assert success is False
+    assert error == "Failed to verify two-factor authentication code"
+
+
+def test_times_out_if_status_never_resolves() -> None:
+    client = FakeClient([MfaStatus("VALIDATING_MFA_CODE", None, "jdoe@icloud.com")] * 3)
+
+    success, error = wait_for_mfa_result(client, poll_interval=0, timeout=0, sleep=lambda _s: None)
+
+    assert success is False
+    assert error == "Timed out waiting for verification result"
