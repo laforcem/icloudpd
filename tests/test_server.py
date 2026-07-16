@@ -189,6 +189,28 @@ def test_force_reauth_rejects_missing_username() -> None:
     assert response.status_code == 400
 
 
+def test_serve_app_logs_url_even_if_logger_was_left_disabled(caplog: object) -> None:
+    # The "icloudpd" logger is a process-wide singleton shared across the
+    # whole test suite (see the comment in base.py's create_logger()): a
+    # test exercising --only-print-filenames sets logger.disabled = True
+    # and only resets it the next time create_logger() runs. Under
+    # pytest-xdist, such a test can land in the same worker just before
+    # this one, without the reset in between - serve_app()'s startup URL
+    # log must not silently disappear because of that.
+    status_exchange = StatusExchange()
+    logger = setup_logger()
+    logger.disabled = True
+
+    with (
+        mock.patch("icloudpd.server.waitress.serve") as mock_serve,
+        caplog.at_level(logging.INFO, logger=logger.name),  # type: ignore[attr-defined]
+    ):
+        serve_app(logger, status_exchange, host="0.0.0.0", port=9091)
+
+    assert "http://localhost:9091/" in caplog.text  # type: ignore[attr-defined]
+    mock_serve.assert_called_once()
+
+
 def test_serve_app_logs_url_before_blocking_on_waitress(caplog: object) -> None:
     status_exchange = StatusExchange()
     logger = setup_logger()
