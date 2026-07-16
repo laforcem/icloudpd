@@ -94,7 +94,7 @@ def build_app(logger: Logger, _status_exchange: StatusExchange) -> Flask:
     @app.route("/trigger-push", methods=["POST"])
     def trigger_push() -> Response:
         if _status_exchange.trigger_mfa():
-            return make_response("", 204)
+            return jsonify({"current_user": _status_exchange.get_current_user()})
         return make_response("Not awaiting an MFA trigger", 409)
 
     @app.route("/force-reauth", methods=["POST"])

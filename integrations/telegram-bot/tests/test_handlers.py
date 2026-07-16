@@ -1,35 +1,28 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 import requests
-
 from bot.handlers import handle_exit, handle_force_reauth, handle_message, handle_start_or_retry
-from bot.icloudpd_client import MfaStatus
+from bot.mfa_waiter import MfaResultWaiter
 from bot.state import ChatState
 
 
 class FakeClient:
     def __init__(
         self,
-        trigger_push_result: bool = True,
+        trigger_push_result: str | None = "jdoe@icloud.com",
         submit_code_result: bool = True,
-        status_sequence: list[MfaStatus] | None = None,
     ) -> None:
         self.trigger_push_result = trigger_push_result
         self.submit_code_result = submit_code_result
-        self._status_sequence = status_sequence or [MfaStatus("IDLE", None, "jdoe@icloud.com")]
 
-    def trigger_push(self) -> bool:
+    def trigger_push(self) -> str | None:
         return self.trigger_push_result
 
     def submit_code(self, code: str) -> bool:
         return self.submit_code_result
-
-    def get_status(self) -> MfaStatus:
-        if len(self._status_sequence) > 1:
-            return self._status_sequence.pop(0)
-        return self._status_sequence[0]
 
 
 class SubmitCodeRaisesClient(FakeClient):
@@ -38,29 +31,7 @@ class SubmitCodeRaisesClient(FakeClient):
 
 
 class TriggerPushRaisesClient(FakeClient):
-    def trigger_push(self) -> bool:
-        raise requests.exceptions.ConnectionError("Remote end closed connection")
-
-
-class GetStatusRaisesAfterTriggerClient(FakeClient):
-    def get_status(self) -> MfaStatus:
-        raise requests.exceptions.ConnectionError("Remote end closed connection")
-
-
-class ConnectionDropsAfterSuccessClient(FakeClient):
-    """Simulates icloudpd's server disappearing right after the code is validated
-    (e.g. a short-lived --auth-only process exiting): the first get_status()
-    call (inside wait_for_mfa_result) sees IDLE, but the second (handle_message's
-    own follow-up call to fetch the username for the success message) fails."""
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
-        self._calls = 0
-
-    def get_status(self) -> MfaStatus:
-        self._calls += 1
-        if self._calls == 1:
-            return MfaStatus("IDLE", None, "jdoe@icloud.com")
+    def trigger_push(self) -> str | None:
         raise requests.exceptions.ConnectionError("Remote end closed connection")
 
 
@@ -107,7 +78,7 @@ async def test_start_ignores_disallowed_chat() -> None:
 
 @pytest.mark.asyncio
 async def test_start_triggers_push_and_awaits_code() -> None:
-    client = FakeClient(trigger_push_result=True)
+    client = FakeClient(trigger_push_result="jdoe@icloud.com")
     state = ChatState()
     callback = make_callback(chat_id=1, data="start_2fa")
 
@@ -115,11 +86,12 @@ async def test_start_triggers_push_and_awaits_code() -> None:
 
     assert state.is_awaiting_code(1) is True
     callback.message.answer.assert_awaited_once()
+    assert "jdoe@icloud.com" in callback.message.answer.await_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_start_alerts_when_nothing_pending() -> None:
-    client = FakeClient(trigger_push_result=False)
+    client = FakeClient(trigger_push_result=None)
     state = ChatState()
     callback = make_callback(chat_id=1, data="start_2fa")
 
@@ -143,23 +115,6 @@ async def test_start_alerts_when_trigger_push_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_still_prompts_for_code_when_status_lookup_fails_after_trigger() -> None:
-    # trigger_push() succeeded - the real Apple push is already in flight -
-    # but the follow-up get_status() call (only used to personalize the
-    # "code requested" message) fails. The user must still be told to expect
-    # a code, and the callback must still be acknowledged.
-    client = GetStatusRaisesAfterTriggerClient(trigger_push_result=True)
-    state = ChatState()
-    callback = make_callback(chat_id=1, data="start_2fa")
-
-    await handle_start_or_retry(callback, client, state, allowed_chat_ids=frozenset({1}))
-
-    assert state.is_awaiting_code(1) is True
-    callback.answer.assert_awaited_once()
-    callback.message.answer.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_exit_stops_awaiting_code() -> None:
     client = FakeClient()
     state = ChatState()
@@ -176,24 +131,30 @@ async def test_exit_stops_awaiting_code() -> None:
 async def test_message_ignored_when_not_awaiting_code() -> None:
     client = FakeClient()
     state = ChatState()
+    waiter = MfaResultWaiter()
     message = make_message(chat_id=1, text="123456")
 
-    await handle_message(message, client, state, allowed_chat_ids=frozenset({1}))
+    await handle_message(message, client, state, waiter, allowed_chat_ids=frozenset({1}))
 
     message.answer.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_message_reports_success() -> None:
-    client = FakeClient(
-        submit_code_result=True,
-        status_sequence=[MfaStatus("IDLE", None, "jdoe@icloud.com")],
-    )
+    client = FakeClient(submit_code_result=True)
     state = ChatState()
     state.start_awaiting_code(1)
+    waiter = MfaResultWaiter()
     message = make_message(chat_id=1, text="123456")
 
-    await handle_message(message, client, state, allowed_chat_ids=frozenset({1}))
+    async def submit_and_resolve() -> None:
+        await asyncio.sleep(0)  # let handle_message call waiter.start() first
+        waiter.resolve(success=True, error=None, username="jdoe@icloud.com")
+
+    await asyncio.gather(
+        handle_message(message, client, state, waiter, allowed_chat_ids=frozenset({1})),
+        submit_and_resolve(),
+    )
 
     message.answer.assert_awaited_once()
     assert "jdoe@icloud.com" in message.answer.await_args.args[0]
@@ -202,21 +163,24 @@ async def test_message_reports_success() -> None:
 
 @pytest.mark.asyncio
 async def test_message_reports_failure_with_retry_buttons() -> None:
-    client = FakeClient(
-        submit_code_result=True,
-        status_sequence=[
-            MfaStatus(
-                "AWAITING_MFA_TRIGGER",
-                "Failed to verify two-factor authentication code",
-                "jdoe@icloud.com",
-            )
-        ],
-    )
+    client = FakeClient(submit_code_result=True)
     state = ChatState()
     state.start_awaiting_code(1)
+    waiter = MfaResultWaiter()
     message = make_message(chat_id=1, text="000000")
 
-    await handle_message(message, client, state, allowed_chat_ids=frozenset({1}))
+    async def submit_and_resolve() -> None:
+        await asyncio.sleep(0)
+        waiter.resolve(
+            success=False,
+            error="Failed to verify two-factor authentication code",
+            username="jdoe@icloud.com",
+        )
+
+    await asyncio.gather(
+        handle_message(message, client, state, waiter, allowed_chat_ids=frozenset({1})),
+        submit_and_resolve(),
+    )
 
     message.answer.assert_awaited_once()
     args, kwargs = message.answer.await_args
@@ -230,9 +194,10 @@ async def test_message_reports_connection_lost_when_submit_raises() -> None:
     client = SubmitCodeRaisesClient()
     state = ChatState()
     state.start_awaiting_code(1)
+    waiter = MfaResultWaiter()
     message = make_message(chat_id=1, text="123456")
 
-    await handle_message(message, client, state, allowed_chat_ids=frozenset({1}))
+    await handle_message(message, client, state, waiter, allowed_chat_ids=frozenset({1}))
 
     message.answer.assert_awaited_once()
     assert "connection" in message.answer.await_args.args[0].lower()
@@ -240,16 +205,21 @@ async def test_message_reports_connection_lost_when_submit_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_message_still_reports_success_if_username_lookup_fails() -> None:
-    client = ConnectionDropsAfterSuccessClient(submit_code_result=True)
+async def test_message_times_out_when_no_result_is_pushed() -> None:
+    client = FakeClient(submit_code_result=True)
     state = ChatState()
     state.start_awaiting_code(1)
+    waiter = MfaResultWaiter()
     message = make_message(chat_id=1, text="123456")
 
-    await handle_message(message, client, state, allowed_chat_ids=frozenset({1}))
+    await handle_message(
+        message, client, state, waiter, allowed_chat_ids=frozenset({1}), result_timeout=0.05
+    )
 
     message.answer.assert_awaited_once()
-    assert "✅" in message.answer.await_args.args[0]
+    args, kwargs = message.answer.await_args
+    assert "Timed out" in args[0]
+    assert "reply_markup" in kwargs
     assert state.is_awaiting_code(1) is False
 
 

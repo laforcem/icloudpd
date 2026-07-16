@@ -1,14 +1,18 @@
 import responses
-
 from bot.icloudpd_client import IcloudpdClient
 
 
 @responses.activate
 def test_trigger_push_success() -> None:
-    responses.add(responses.POST, "http://icloudpd:8080/trigger-push", status=204)
+    responses.add(
+        responses.POST,
+        "http://icloudpd:8080/trigger-push",
+        json={"current_user": "jdoe@icloud.com"},
+        status=200,
+    )
     client = IcloudpdClient("http://icloudpd:8080")
 
-    assert client.trigger_push() is True
+    assert client.trigger_push() == "jdoe@icloud.com"
 
 
 @responses.activate
@@ -16,7 +20,7 @@ def test_trigger_push_conflict() -> None:
     responses.add(responses.POST, "http://icloudpd:8080/trigger-push", status=409)
     client = IcloudpdClient("http://icloudpd:8080")
 
-    assert client.trigger_push() is False
+    assert client.trigger_push() is None
 
 
 @responses.activate

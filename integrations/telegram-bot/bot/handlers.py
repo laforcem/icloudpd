@@ -7,7 +7,6 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
 from bot.icloudpd_client import IcloudpdClient
-from bot.mfa_result import wait_for_mfa_result
 from bot.messages import (
     code_accepted_success_text,
     code_failed_keyboard,
@@ -19,6 +18,7 @@ from bot.messages import (
     force_reauth_requested_text,
     push_not_pending_text,
 )
+from bot.mfa_waiter import MfaResultWaiter
 from bot.state import ChatState
 
 
@@ -34,24 +34,16 @@ async def handle_start_or_retry(
         return
 
     try:
-        triggered = await asyncio.to_thread(client.trigger_push)
+        username = await asyncio.to_thread(client.trigger_push)
     except requests.exceptions.RequestException:
         await callback.answer(connection_lost_text(), show_alert=True)
         return
 
-    if not triggered:
+    if username is None:
         await callback.answer(push_not_pending_text(), show_alert=True)
         return
 
     state.start_awaiting_code(chat_id)
-    try:
-        status = await asyncio.to_thread(client.get_status)
-        username = status.current_user or ""
-    except requests.exceptions.RequestException:
-        # trigger_push() already succeeded - the real push is in flight - so
-        # the user must still be told to expect a code even without a
-        # personalized username.
-        username = ""
     await callback.answer()
     await callback.message.answer(code_requested_text(username))
 
@@ -98,7 +90,9 @@ async def handle_message(
     message: Message,
     client: IcloudpdClient,
     state: ChatState,
+    waiter: MfaResultWaiter,
     allowed_chat_ids: frozenset[int],
+    result_timeout: float = 120.0,
 ) -> None:
     chat_id = message.chat.id
     # Not atomic with the submit_code below: two messages in quick succession
@@ -109,6 +103,12 @@ async def handle_message(
         return
 
     code = (message.text or "").strip()
+
+    # Start waiting before submitting the code: icloudpd's mfa_result push can
+    # arrive within milliseconds of the code landing, so the waiter must exist
+    # before submit_code() goes out, not after.
+    future = waiter.start()
+
     try:
         submitted = await asyncio.to_thread(client.submit_code, code)
     except requests.exceptions.RequestException:
@@ -121,18 +121,19 @@ async def handle_message(
         await message.answer(push_not_pending_text())
         return
 
-    success, error = await asyncio.to_thread(wait_for_mfa_result, client)
+    try:
+        success, error, username = await asyncio.wait_for(future, timeout=result_timeout)
+    except asyncio.TimeoutError:
+        state.stop_awaiting_code(chat_id)
+        await message.answer(
+            code_failed_text("Timed out waiting for verification result"),
+            reply_markup=code_failed_keyboard(),
+        )
+        return
+
     state.stop_awaiting_code(chat_id)
     if success:
-        try:
-            status = await asyncio.to_thread(client.get_status)
-            username = status.current_user or ""
-        except requests.exceptions.RequestException:
-            # We already know the code was accepted (wait_for_mfa_result
-            # returned success); losing the connection just for this
-            # username lookup shouldn't turn a success into an error.
-            username = ""
-        await message.answer(code_accepted_success_text(username))
+        await message.answer(code_accepted_success_text(username or ""))
     else:
         await message.answer(
             code_failed_text(error or "Verification failed"),
@@ -141,7 +142,10 @@ async def handle_message(
 
 
 def build_router(
-    client: IcloudpdClient, state: ChatState, allowed_chat_ids: frozenset[int]
+    client: IcloudpdClient,
+    state: ChatState,
+    waiter: MfaResultWaiter,
+    allowed_chat_ids: frozenset[int],
 ) -> Router:
     router = Router()
 
@@ -159,6 +163,6 @@ def build_router(
 
     @router.message()
     async def _message(message: Message) -> None:
-        await handle_message(message, client, state, allowed_chat_ids)
+        await handle_message(message, client, state, waiter, allowed_chat_ids)
 
     return router
