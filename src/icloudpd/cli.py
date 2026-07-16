@@ -6,7 +6,7 @@ import pathlib
 import sys
 from itertools import dropwhile
 from operator import eq, not_
-from typing import Any, Callable, Iterable, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple
 
 from tzlocal import get_localzone
 
@@ -16,7 +16,7 @@ from foundation.string_utils import lower
 from icloudpd.base import ensure_tzinfo, run_with_configs
 from icloudpd.config import GlobalConfig, UserConfig
 from icloudpd.config_defaults import GLOBAL_OPTION_DEFAULTS, USER_OPTION_DEFAULTS
-from icloudpd.config_file import load_config_file, merge_user_dict
+from icloudpd.config_file import dump_resolved_config, load_config_file, merge_user_dict
 from icloudpd.log_level import LogLevel
 from icloudpd.mfa_provider import MFAProvider
 from icloudpd.password_provider import PasswordProvider
@@ -615,12 +615,49 @@ def parse(args: Sequence[str]) -> Tuple[GlobalConfig, Sequence[UserConfig]]:
     return (map_to_global_config(global_ns), user_nses)
 
 
+def _resolved_config_as_dicts(
+    global_config: GlobalConfig, user_configs: Sequence[UserConfig]
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    app: Dict[str, Any] = {
+        "log_level": global_config.log_level.value,
+        "mfa_provider": global_config.mfa_provider.value,
+        "watch_with_interval": global_config.watch_with_interval,
+        "domain": global_config.domain,
+        "webui_port": global_config.webui_port,
+        "no_progress_bar": global_config.no_progress_bar,
+        "only_print_filenames": global_config.only_print_filenames,
+        "use_os_locale": global_config.use_os_locale,
+        "threads_num": global_config.threads_num,
+        "password_providers": [p.value for p in global_config.password_providers],
+    }
+    users: List[Dict[str, Any]] = []
+    for user_config in user_configs:
+        users.append(
+            {
+                "username": user_config.username,
+                "directory": user_config.directory,
+                "sizes": [s.value for s in user_config.sizes],
+                "skip_videos": user_config.skip_videos,
+                "skip_photos": user_config.skip_photos,
+                "skip_live_photos": user_config.skip_live_photos,
+                "folder_structure": user_config.folder_structure,
+                "dry_run": user_config.dry_run,
+                "password_file": user_config.password_file,
+            }
+        )
+    return app, users
+
+
 def cli() -> int:
     try:
         global_ns, user_nses = parse(sys.argv[1:])
     except argparse.ArgumentError as error:
         print(error)
         return 2
+    if "--print-config" in sys.argv:
+        app, users = _resolved_config_as_dicts(global_ns, user_nses)
+        print(dump_resolved_config(app, users), end="")
+        return 0
     if global_ns.use_os_locale:
         from locale import LC_ALL, setlocale
 
