@@ -16,6 +16,7 @@ from bot.messages import (
     session_expiring_soon_text,
     start_2fa_keyboard,
 )
+from bot.mfa_waiter import MfaResultWaiter
 from bot.notify_listener import build_notify_app
 from bot.state import ChatState
 
@@ -30,7 +31,8 @@ async def run() -> None:
     dispatcher = Dispatcher()
     client = IcloudpdClient(config.icloudpd_base_url)
     state = ChatState()
-    dispatcher.include_router(build_router(client, state, config.allowed_chat_ids))
+    waiter = MfaResultWaiter()
+    dispatcher.include_router(build_router(client, state, waiter, config.allowed_chat_ids))
 
     async def on_session_expired(event: dict[str, Any]) -> None:
         text = session_expired_text(
@@ -45,7 +47,15 @@ async def run() -> None:
         for chat_id in config.allowed_chat_ids:
             await bot.send_message(chat_id, text, reply_markup=force_reauth_keyboard(username))
 
-    notify_app = build_notify_app(on_session_expired, on_session_expiring_soon)
+    async def on_mfa_result(event: dict[str, Any]) -> None:
+        data = event.get("data", {})
+        waiter.resolve(
+            success=bool(data.get("success")),
+            error=data.get("error"),
+            username=event.get("username"),
+        )
+
+    notify_app = build_notify_app(on_session_expired, on_session_expiring_soon, on_mfa_result)
     runner = web.AppRunner(notify_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", config.notify_listener_port)
