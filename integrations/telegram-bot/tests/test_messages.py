@@ -4,9 +4,34 @@ from bot.messages import (
     code_failed_text,
     code_requested_text,
     connection_lost_text,
+    force_reauth_keyboard,
+    force_reauth_not_found_text,
+    force_reauth_requested_text,
     session_expired_text,
+    session_expiring_soon_text,
     start_2fa_keyboard,
 )
+
+
+def test_session_expiring_soon_text_includes_username_and_message() -> None:
+    text = session_expiring_soon_text("jdoe@icloud.com", "session expires in 3.0 day(s)")
+
+    assert "jdoe@icloud.com" in text
+    assert "3.0 day(s)" in text
+
+
+def test_force_reauth_keyboard_embeds_username_in_callback_data() -> None:
+    keyboard = force_reauth_keyboard("jdoe@icloud.com")
+
+    assert keyboard.inline_keyboard[0][0].callback_data == "force_reauth:jdoe@icloud.com"
+
+
+def test_force_reauth_requested_text_includes_username() -> None:
+    assert "jdoe@icloud.com" in force_reauth_requested_text("jdoe@icloud.com")
+
+
+def test_force_reauth_not_found_text_is_non_empty() -> None:
+    assert force_reauth_not_found_text()
 
 
 def test_session_expired_text_includes_username_and_message() -> None:

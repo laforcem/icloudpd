@@ -49,3 +49,27 @@ def code_failed_text(error: str) -> str:
 
 def exited_text() -> str:
     return "Okay. Tap Start 2FA again whenever you're ready."
+
+
+def session_expiring_soon_text(username: str, message: str) -> str:
+    return f"⏳ {username}: {message}"
+
+
+def force_reauth_keyboard(username: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Refresh session now", callback_data=f"force_reauth:{username}"
+                )
+            ]
+        ]
+    )
+
+
+def force_reauth_requested_text(username: str) -> str:
+    return f"Refreshing session for {username}. This may take a few seconds."
+
+
+def force_reauth_not_found_text() -> str:
+    return "That account isn't configured on this icloudpd instance."
