@@ -1,6 +1,7 @@
 import datetime
 import inspect
 import os
+import pathlib
 import shutil
 import zoneinfo
 from argparse import ArgumentError
@@ -8,6 +9,7 @@ from typing import Sequence, Tuple
 from unittest import TestCase
 
 import pytest
+import yaml as _yaml  # only used to write fixture files in these tests
 
 from icloudpd.cli import format_help, parse
 from icloudpd.config import GlobalConfig, UserConfig
@@ -576,3 +578,66 @@ def test_webui_port_custom_value() -> None:
         ["--directory", "abc", "--username", "u1", "--webui-port", "9999"]
     )
     assert global_config.webui_port == 9999
+
+
+def _write_config(tmp_path: pathlib.Path, data: dict) -> str:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_yaml.safe_dump(data))
+    return str(config_path)
+
+
+def test_config_file_drives_multi_account_run(tmp_path: pathlib.Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "app": {"mfa_provider": "webui", "watch_with_interval": 3600},
+            "all_users": {"directory": "/data"},
+            "users": [
+                {"username": "you@icloud.com"},
+                {"username": "partner@icloud.com", "directory": "/data/account2"},
+            ],
+        },
+    )
+    global_config, user_configs = parse(["--config", config_path])
+    assert global_config.mfa_provider == MFAProvider.WEBUI
+    assert global_config.watch_with_interval == 3600
+    assert len(user_configs) == 2
+    assert user_configs[0].username == "you@icloud.com"
+    assert user_configs[0].directory == "/data"
+    assert user_configs[1].username == "partner@icloud.com"
+    assert user_configs[1].directory == "/data/account2"
+
+
+def test_cli_arg_overrides_config_file_value(tmp_path: pathlib.Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "all_users": {"directory": "/data"},
+            "users": [{"username": "you@icloud.com"}],
+        },
+    )
+    _global_config, user_configs = parse(
+        ["--config", config_path, "--directory", "/override"]
+    )
+    assert user_configs[0].directory == "/override"
+
+
+def test_config_file_and_cli_username_are_mutually_exclusive(tmp_path: pathlib.Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {"users": [{"username": "you@icloud.com", "directory": "/data"}]},
+    )
+    with pytest.raises(ArgumentError, match="users"):
+        parse(["--config", config_path, "-u", "someone@icloud.com", "--directory", "/x"])
+
+
+def test_default_config_path_used_when_no_flag_given(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        _yaml.safe_dump({"users": [{"username": "you@icloud.com", "directory": "/data"}]})
+    )
+    monkeypatch.setattr("icloudpd.cli.DEFAULT_CONFIG_PATH", str(config_path))
+    _global_config, user_configs = parse([])
+    assert user_configs[0].username == "you@icloud.com"

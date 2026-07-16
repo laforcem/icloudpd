@@ -1,6 +1,7 @@
 import argparse
 import copy
 import datetime
+import os
 import pathlib
 import sys
 from itertools import dropwhile
@@ -15,6 +16,7 @@ from foundation.string_utils import lower
 from icloudpd.base import ensure_tzinfo, run_with_configs
 from icloudpd.config import GlobalConfig, UserConfig
 from icloudpd.config_defaults import GLOBAL_OPTION_DEFAULTS, USER_OPTION_DEFAULTS
+from icloudpd.config_file import load_config_file, merge_user_dict
 from icloudpd.log_level import LogLevel
 from icloudpd.mfa_provider import MFAProvider
 from icloudpd.password_provider import PasswordProvider
@@ -528,8 +530,8 @@ def map_to_global_config(global_ns: argparse.Namespace) -> GlobalConfig:
 
 
 def parse(args: Sequence[str]) -> Tuple[GlobalConfig, Sequence[UserConfig]]:
-    # default --help
-    if len(args) == 0:
+    # default --help, unless a config file will be found at the default path
+    if len(args) == 0 and not os.path.isfile(DEFAULT_CONFIG_PATH):
         args = ["--help"]
     else:
         pass
@@ -540,15 +542,65 @@ def parse(args: Sequence[str]) -> Tuple[GlobalConfig, Sequence[UserConfig]]:
     )
     global_ns, non_global_args = global_parser.parse_known_args(args)
 
+    config_path = global_ns.config_path or (
+        DEFAULT_CONFIG_PATH if os.path.isfile(DEFAULT_CONFIG_PATH) else None
+    )
+
     # Now split the remaining non-global args by username boundaries
     splitted_args = foundation.split_with_alternatives(["-u", "--username"], non_global_args)
     default_args = splitted_args[0]
+    cli_specifies_users = len(splitted_args) > 1
 
     default_parser: argparse.ArgumentParser = add_options_for_user(
         argparse.ArgumentParser(exit_on_error=False, add_help=False, allow_abbrev=False)
     )
 
     default_ns = default_parser.parse_args(default_args)
+
+    if config_path is not None:
+        if cli_specifies_users:
+            raise argparse.ArgumentError(
+                None,
+                "--config (or a config file found at the default path) cannot be combined "
+                "with -u/--username CLI arguments — define accounts in the config file's "
+                "`users:` list instead.",
+            )
+        raw_config = load_config_file(config_path)
+
+        # CLI values given alongside --config act as a uniform override for every account,
+        # since there's no per-account CLI targeting available in config-file mode.
+        global_overrides = {
+            field: getattr(global_ns, field, None) for field in GLOBAL_OPTION_DEFAULTS
+        }
+        merged_global_raw = {
+            field: (
+                global_overrides[field]
+                if global_overrides[field] is not None
+                else raw_config.app.get(field)
+            )
+            for field in GLOBAL_OPTION_DEFAULTS
+        }
+        for field, value in merged_global_raw.items():
+            setattr(global_ns, field, value)
+
+        cli_user_overrides = {
+            field: getattr(default_ns, field, None) for field in USER_OPTION_DEFAULTS
+        }
+
+        user_nses = []
+        for user_entry in raw_config.users:
+            merged_user_dict = merge_user_dict(raw_config.all_users, user_entry)
+            user_ns = argparse.Namespace()
+            user_ns.username = merged_user_dict["username"]
+            user_ns.password = None
+            user_ns.password_file = merged_user_dict.get("password_file")
+            for field in USER_OPTION_DEFAULTS:
+                cli_value = cli_user_overrides[field]
+                file_value = merged_user_dict.get(field)
+                setattr(user_ns, field, cli_value if cli_value is not None else file_value)
+            user_nses.append(map_to_config(user_ns))
+
+        return (map_to_global_config(global_ns), user_nses)
 
     user_parser: argparse.ArgumentParser = add_user_option(
         add_options_for_user(
