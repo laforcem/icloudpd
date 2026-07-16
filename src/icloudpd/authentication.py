@@ -299,9 +299,13 @@ def request_2fa_web(
 
         if not icloud.validate_2fa_code(code):
             error = "Failed to verify two-factor authentication code"
+            # Notify before flipping status: set_error() below unblocks the bot to
+            # retry immediately, and notify_mfa_result() is a blocking subprocess
+            # call (up to 10s). Flipping first would let a fast retry's waiter
+            # steal this stale failure notification once it finally lands.
+            notify_mfa_result(False, error)
             if not status_exchange.set_error(error):
                 raise PyiCloudFailedMFAException("Failed to change status of invalid code")
-            notify_mfa_result(False, error)
             # dropped back to AWAITING_MFA_TRIGGER; loop and wait for another explicit trigger
             continue
 

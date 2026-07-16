@@ -161,3 +161,40 @@ def test_failed_code_notifies_mfa_result_failure() -> None:
         (False, "Failed to verify two-factor authentication code"),
         (True, None),
     ]
+
+
+def test_failed_code_notifies_before_flipping_status_back() -> None:
+    # notify_mfa_result() can be slow in production (a blocking subprocess +
+    # network call, up to ~10s). If the status flip to AWAITING_MFA_TRIGGER
+    # happened first, a fast retry could start before that stale failure
+    # notification is delivered, and a single-slot waiter (see the bot's
+    # MfaResultWaiter) would misattribute it to the new attempt. Pin the
+    # ordering: notify_mfa_result() must be called while still
+    # VALIDATING_MFA_CODE, before the status has flipped back.
+    status_exchange = StatusExchange()
+    icloud = make_icloud([False, True])
+    logger = setup_logger()
+    status_at_notify_time: List[Status] = []
+
+    def notify_mfa_result(success: bool, error: str | None) -> None:
+        status_at_notify_time.append(status_exchange.get_status())
+
+    thread = threading.Thread(
+        target=request_2fa_web,
+        args=(icloud, logger, status_exchange, notify_mfa_result),
+        daemon=True,
+    )
+    thread.start()
+
+    wait_for_status(status_exchange, Status.AWAITING_MFA_TRIGGER)
+    status_exchange.trigger_mfa()
+    wait_for_status(status_exchange, Status.AWAITING_MFA_CODE)
+    status_exchange.set_payload("000000")
+    wait_for_status(status_exchange, Status.AWAITING_MFA_TRIGGER)
+
+    assert status_at_notify_time == [Status.VALIDATING_MFA_CODE]
+
+    status_exchange.trigger_mfa()
+    wait_for_status(status_exchange, Status.AWAITING_MFA_CODE)
+    status_exchange.set_payload("123456")
+    thread.join(timeout=2.0)
