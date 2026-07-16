@@ -37,6 +37,16 @@ class SubmitCodeRaisesClient(FakeClient):
         raise requests.exceptions.ConnectionError("Remote end closed connection")
 
 
+class TriggerPushRaisesClient(FakeClient):
+    def trigger_push(self) -> bool:
+        raise requests.exceptions.ConnectionError("Remote end closed connection")
+
+
+class GetStatusRaisesAfterTriggerClient(FakeClient):
+    def get_status(self) -> MfaStatus:
+        raise requests.exceptions.ConnectionError("Remote end closed connection")
+
+
 class ConnectionDropsAfterSuccessClient(FakeClient):
     """Simulates icloudpd's server disappearing right after the code is validated
     (e.g. a short-lived --auth-only process exiting): the first get_status()
@@ -101,6 +111,36 @@ async def test_start_alerts_when_nothing_pending() -> None:
 
     callback.answer.assert_awaited_once()
     assert state.is_awaiting_code(1) is False
+
+
+@pytest.mark.asyncio
+async def test_start_alerts_when_trigger_push_raises() -> None:
+    client = TriggerPushRaisesClient()
+    state = ChatState()
+    callback = make_callback(chat_id=1, data="start_2fa")
+
+    await handle_start_or_retry(callback, client, state, allowed_chat_ids=frozenset({1}))
+
+    callback.answer.assert_awaited_once()
+    callback.message.answer.assert_not_called()
+    assert state.is_awaiting_code(1) is False
+
+
+@pytest.mark.asyncio
+async def test_start_still_prompts_for_code_when_status_lookup_fails_after_trigger() -> None:
+    # trigger_push() succeeded - the real Apple push is already in flight -
+    # but the follow-up get_status() call (only used to personalize the
+    # "code requested" message) fails. The user must still be told to expect
+    # a code, and the callback must still be acknowledged.
+    client = GetStatusRaisesAfterTriggerClient(trigger_push_result=True)
+    state = ChatState()
+    callback = make_callback(chat_id=1, data="start_2fa")
+
+    await handle_start_or_retry(callback, client, state, allowed_chat_ids=frozenset({1}))
+
+    assert state.is_awaiting_code(1) is True
+    callback.answer.assert_awaited_once()
+    callback.message.answer.assert_awaited_once()
 
 
 @pytest.mark.asyncio

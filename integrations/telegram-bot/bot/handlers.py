@@ -31,15 +31,27 @@ async def handle_start_or_retry(
         await callback.answer()
         return
 
-    triggered = await asyncio.to_thread(client.trigger_push)
+    try:
+        triggered = await asyncio.to_thread(client.trigger_push)
+    except requests.exceptions.RequestException:
+        await callback.answer(connection_lost_text(), show_alert=True)
+        return
+
     if not triggered:
         await callback.answer(push_not_pending_text(), show_alert=True)
         return
 
     state.start_awaiting_code(chat_id)
-    status = await asyncio.to_thread(client.get_status)
+    try:
+        status = await asyncio.to_thread(client.get_status)
+        username = status.current_user or ""
+    except requests.exceptions.RequestException:
+        # trigger_push() already succeeded - the real push is in flight - so
+        # the user must still be told to expect a code even without a
+        # personalized username.
+        username = ""
     await callback.answer()
-    await callback.message.answer(code_requested_text(status.current_user or ""))
+    await callback.message.answer(code_requested_text(username))
 
 
 async def handle_exit(
