@@ -1,0 +1,21 @@
+services:
+  icloudpd:
+    image: icloudpd/icloudpd:latest
+    configs:
+      - source: icloudpd_config
+        target: /etc/icloudpd/config.yaml
+    secrets:
+      - icloud_password_you
+      - icloud_password_partner
+    volumes:
+      - ./data:/data
+
+configs:
+  icloudpd_config:
+    file: ./icloudpd-config.example.yaml
+
+secrets:
+  icloud_password_you:
+    file: ./secrets/you.txt
+  icloud_password_partner:
+    file: ./secrets/partner.txt
