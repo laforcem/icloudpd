@@ -7,13 +7,14 @@ from icloudpd.progress import Progress
 
 
 class Status(Enum):
-    NO_INPUT_NEEDED = "no_input_needed"
-    NEED_MFA = "need_mfa"
-    SUPPLIED_MFA = "supplied_mfa"
-    CHECKING_MFA = "checking_mfa"
-    NEED_PASSWORD = "need_password"
-    SUPPLIED_PASSWORD = "supplied_password"
-    CHECKING_PASSWORD = "checking_password"
+    IDLE = "idle"
+    AWAITING_MFA_TRIGGER = "awaiting_mfa_trigger"
+    AWAITING_MFA_CODE = "awaiting_mfa_code"
+    SUBMITTED_MFA_CODE = "submitted_mfa_code"
+    VALIDATING_MFA_CODE = "validating_mfa_code"
+    AWAITING_PASSWORD = "awaiting_password"
+    SUBMITTED_PASSWORD = "submitted_password"
+    VALIDATING_PASSWORD = "validating_password"
 
     def __str__(self) -> str:
         return self.name
@@ -22,7 +23,7 @@ class Status(Enum):
 class StatusExchange:
     def __init__(self) -> None:
         self.lock = Lock()
-        self._status = Status.NO_INPUT_NEEDED
+        self._status = Status.IDLE
         self._payload: str | None = None
         self._error: str | None = None
         self._global_config: GlobalConfig | None = None
@@ -42,14 +43,23 @@ class StatusExchange:
             else:
                 return False
 
+    def trigger_mfa(self) -> bool:
+        with self.lock:
+            if self._status != Status.AWAITING_MFA_TRIGGER:
+                return False
+            self._status = Status.AWAITING_MFA_CODE
+            return True
+
     def set_payload(self, payload: str) -> bool:
         with self.lock:
-            if self._status != Status.NEED_MFA and self._status != Status.NEED_PASSWORD:
+            if self._status != Status.AWAITING_MFA_CODE and self._status != Status.AWAITING_PASSWORD:
                 return False
 
             self._payload = payload
             self._status = (
-                Status.SUPPLIED_MFA if self._status == Status.NEED_MFA else Status.SUPPLIED_PASSWORD
+                Status.SUBMITTED_MFA_CODE
+                if self._status == Status.AWAITING_MFA_CODE
+                else Status.SUBMITTED_PASSWORD
             )
             self._error = None
             return True
@@ -57,10 +67,10 @@ class StatusExchange:
     def get_payload(self) -> str | None:
         with self.lock:
             if self._status not in [
-                Status.SUPPLIED_MFA,
-                Status.CHECKING_MFA,
-                Status.SUPPLIED_PASSWORD,
-                Status.CHECKING_PASSWORD,
+                Status.SUBMITTED_MFA_CODE,
+                Status.VALIDATING_MFA_CODE,
+                Status.SUBMITTED_PASSWORD,
+                Status.VALIDATING_PASSWORD,
             ]:
                 return None
 
@@ -68,23 +78,23 @@ class StatusExchange:
 
     def set_error(self, error: str) -> bool:
         with self.lock:
-            if self._status != Status.CHECKING_MFA and self._status != Status.CHECKING_PASSWORD:
+            if self._status != Status.VALIDATING_MFA_CODE and self._status != Status.VALIDATING_PASSWORD:
                 return False
 
             self._error = error
             self._status = (
-                Status.NO_INPUT_NEEDED
-                if self._status == Status.CHECKING_PASSWORD
-                else Status.NEED_MFA
+                Status.IDLE
+                if self._status == Status.VALIDATING_PASSWORD
+                else Status.AWAITING_MFA_TRIGGER
             )
             return True
 
     def get_error(self) -> str | None:
         with self.lock:
             if self._status not in [
-                Status.NO_INPUT_NEEDED,
-                Status.NEED_PASSWORD,
-                Status.NEED_MFA,
+                Status.IDLE,
+                Status.AWAITING_PASSWORD,
+                Status.AWAITING_MFA_TRIGGER,
             ]:
                 return None
 
