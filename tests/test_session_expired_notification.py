@@ -53,7 +53,7 @@ class SessionExpiredNotificationTestCase(TestCase):
             payload = json.loads(kwargs["input"])
             self.assertEqual(payload["event_type"], "session_expired")
             self.assertEqual(payload["username"], "jdoe@gmail.com")
-            self.assertIn("two-step authentication has expired", payload["message"])
+            self.assertIn("two-step authentication", payload["message"])
 
     @freeze_time("2018-01-01")
     def test_2sa_required_real_script_actually_receives_json_on_stdin(self) -> None:
@@ -99,4 +99,4 @@ class SessionExpiredNotificationTestCase(TestCase):
             payload = json.load(f)
         self.assertEqual(payload["event_type"], "session_expired")
         self.assertEqual(payload["username"], "jdoe@gmail.com")
-        self.assertIn("two-step authentication has expired", payload["message"])
+        self.assertIn("two-step authentication", payload["message"])

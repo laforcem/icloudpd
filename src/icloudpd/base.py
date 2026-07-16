@@ -459,11 +459,8 @@ def notificator_builder(
     event = notifications.build_event(
         event_type="session_expired",
         username=username,
-        message=(
-            f"{username}'s two-step authentication has expired for icloudpd. "
-            "Please log in to your server and run the script manually to update "
-            "two-step authentication."
-        ),
+        message=f"{username}'s icloudpd session needs two-step authentication. "
+        "Tap Start 2FA below to continue.",
     )
     notifications.notify(logger, notification_script, event)
 
