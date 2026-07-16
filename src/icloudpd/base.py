@@ -173,6 +173,21 @@ def dummy_password_writter(_u: str, _p: str) -> None:
     pass
 
 
+def resolve_constant_password(password: str | None, password_file: str | None) -> str | None:
+    """Resolve the constant password for `PasswordProvider.PARAMETER`.
+
+    `password_file` (a path to a file containing the secret) takes precedence
+    over the literal `password` value — the file-based form is the only one
+    supported by the YAML config file (see config_file.py), so any config-file
+    -driven run reaches this via `password_file`. `password` remains for
+    direct CLI (`-p`/`--password`) use, unchanged from today's behavior.
+    """
+    if password_file is not None:
+        with open(password_file, encoding="utf-8") as f:
+            return f.read().rstrip("\n")
+    return password
+
+
 def keyring_password_writter(logger: Logger) -> Callable[[str, str], None]:
     def _intern(username: str, password: str) -> None:
         try:
@@ -360,7 +375,11 @@ def _process_all_users_once(
                         return password_provider
 
                     password_providers_dict[provider] = (
-                        create_constant_password_provider(user_config.password),
+                        create_constant_password_provider(
+                            resolve_constant_password(
+                                user_config.password, user_config.password_file
+                            )
+                        ),
                         dummy_password_writter,
                     )
 

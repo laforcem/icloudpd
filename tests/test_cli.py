@@ -641,3 +641,22 @@ def test_default_config_path_used_when_no_flag_given(
     monkeypatch.setattr("icloudpd.cli.DEFAULT_CONFIG_PATH", str(config_path))
     _global_config, user_configs = parse([])
     assert user_configs[0].username == "you@icloud.com"
+
+
+def test_password_file_field_is_populated_from_config(tmp_path: pathlib.Path) -> None:
+    secret_path = tmp_path / "secret.txt"
+    secret_path.write_text("hunter2\n")
+    config_path = _write_config(
+        tmp_path,
+        {
+            "users": [
+                {
+                    "username": "you@icloud.com",
+                    "directory": "/data",
+                    "password_file": str(secret_path),
+                }
+            ]
+        },
+    )
+    _global_config, user_configs = parse(["--config", config_path])
+    assert user_configs[0].password_file == str(secret_path)
