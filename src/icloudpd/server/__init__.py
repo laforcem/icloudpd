@@ -3,12 +3,12 @@ import sys
 from logging import Logger
 
 import waitress
-from flask import Flask, Response, make_response, render_template, request
+from flask import Flask, Response, jsonify, make_response, render_template, request
 
 from icloudpd.status import Status, StatusExchange
 
 
-def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
+def build_app(logger: Logger, _status_exchange: StatusExchange) -> Flask:
     app = Flask(__name__)
     app.logger = logger
     # for running in pyinstaller
@@ -30,7 +30,7 @@ def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
         _progress = _status_exchange.get_progress()
         _error = _status_exchange.get_error()
 
-        if _status == Status.NO_INPUT_NEEDED:
+        if _status == Status.IDLE:
             return render_template(
                 "no_input.html",
                 status=_status,
@@ -40,11 +40,23 @@ def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
                 user_configs=[vars(uc) for uc in _user_configs] if _user_configs else [],
                 current_user=_current_user,
             )
-        if _status == Status.NEED_MFA:
+        if _status == Status.AWAITING_MFA_TRIGGER:
+            return render_template("mfa_trigger.html", error=_error, current_user=_current_user)
+        if _status == Status.AWAITING_MFA_CODE:
             return render_template("code.html", error=_error, current_user=_current_user)
-        if _status == Status.NEED_PASSWORD:
+        if _status == Status.AWAITING_PASSWORD:
             return render_template("password.html", error=_error, current_user=_current_user)
         return render_template("status.html", status=_status)
+
+    @app.route("/status.json", methods=["GET"])
+    def get_status_json() -> Response:
+        return jsonify(
+            {
+                "status": str(_status_exchange.get_status()),
+                "error": _status_exchange.get_error(),
+                "current_user": _status_exchange.get_current_user(),
+            }
+        )
 
     @app.route("/code", methods=["POST"])
     def set_code() -> Response | str:
@@ -78,6 +90,12 @@ def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
             400,
         )  # incorrect code
 
+    @app.route("/trigger-push", methods=["POST"])
+    def trigger_push() -> Response:
+        if _status_exchange.trigger_mfa():
+            return make_response("", 204)
+        return make_response("Not awaiting an MFA trigger", 409)
+
     @app.route("/resume", methods=["POST"])
     def resume() -> Response | str:
         _status_exchange.get_progress().resume = True
@@ -88,5 +106,9 @@ def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
         _status_exchange.get_progress().cancel = True
         return make_response("Ok", 200)
 
+    return app
+
+
+def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
     logger.debug("Starting web server...")
-    return waitress.serve(app)
+    return waitress.serve(build_app(logger, _status_exchange))

@@ -251,52 +251,60 @@ def request_2fa_web(
     icloud: PyiCloudService, logger: logging.Logger, status_exchange: StatusExchange
 ) -> None:
     """Request two-factor authentication through Webui."""
-    # Trigger push notification to trusted devices before prompting for code.
-    # Apple's auth flow (2026+) requires a PUT to /verify/trusteddevice/securitycode
-    # to initiate code delivery. Failure is non-fatal — the user can still enter
-    # a code if it arrives via another path.
-    if not icloud.trigger_push_notification():
-        logger.debug("Failed to trigger 2FA push notification, continuing anyway")
-    else:
-        logger.debug("2FA push notification triggered")
-
-    if not status_exchange.replace_status(Status.NO_INPUT_NEEDED, Status.NEED_MFA):
+    if not status_exchange.replace_status(Status.IDLE, Status.AWAITING_MFA_TRIGGER):
         raise PyiCloudFailedMFAException(
-            f"Expected NO_INPUT_NEEDED, but got {status_exchange.get_status()}"
+            f"Expected IDLE, but got {status_exchange.get_status()}"
         )
 
-    # wait for input
     while True:
-        status = status_exchange.get_status()
-        if status == Status.NEED_MFA:
-            time.sleep(1)
-            continue
+        # Tight poll (unlike the 1s poll in base.py's password-wait loop) so an
+        # HTTP-driven trigger (e.g. a Telegram bot tapping /trigger-push) doesn't
+        # add up to a second of visible latency before the push fires.
+        while status_exchange.get_status() == Status.AWAITING_MFA_TRIGGER:
+            time.sleep(0.01)
+
+        # A caller fast enough to submit a code between our trigger_mfa() and
+        # our next check (unrealistic for a human/bot round-trip, but possible
+        # under test) may already have moved us to SUBMITTED_MFA_CODE.
+        if status_exchange.get_status() not in (Status.AWAITING_MFA_CODE, Status.SUBMITTED_MFA_CODE):
+            raise PyiCloudFailedMFAException(
+                f"Unexpected status while awaiting MFA trigger: {status_exchange.get_status()}"
+            )
+
+        # Trigger push notification to trusted devices now that it's been asked for.
+        # Apple's auth flow (2026+) requires a PUT to /verify/trusteddevice/securitycode
+        # to initiate code delivery. Failure is non-fatal — the user can still enter
+        # a code if it arrives via another path.
+        if not icloud.trigger_push_notification():
+            logger.debug("Failed to trigger 2FA push notification, continuing anyway")
         else:
-            pass
+            logger.debug("2FA push notification triggered")
 
-        if status_exchange.replace_status(Status.SUPPLIED_MFA, Status.CHECKING_MFA):
-            code = status_exchange.get_payload()
-            if not code:
-                raise PyiCloudFailedMFAException(
-                    "Internal error: did not get code for SUPPLIED_MFA status"
-                )
+        # wait for a code to be submitted
+        while status_exchange.get_status() == Status.AWAITING_MFA_CODE:
+            time.sleep(0.01)
 
-            if not icloud.validate_2fa_code(code):
-                if status_exchange.set_error("Failed to verify two-factor authentication code"):
-                    # that will loop forever
-                    # TODO give user an option to restart auth in case they missed code
-                    continue
-                else:
-                    raise PyiCloudFailedMFAException("Failed to chage status of invalid code")
-            else:
-                status_exchange.replace_status(Status.CHECKING_MFA, Status.NO_INPUT_NEEDED)  # done
-
-                logger.info(
-                    "Great, you're all set up. The script can now be run without "
-                    "user interaction until 2FA expires.\n"
-                    "You can set up a notification script for when "
-                    "the two-factor authentication expires.\n"
-                    "(Use --notification-script to configure this.)"
-                )
-        else:
+        if not status_exchange.replace_status(Status.SUBMITTED_MFA_CODE, Status.VALIDATING_MFA_CODE):
             raise PyiCloudFailedMFAException("Failed to change status")
+
+        code = status_exchange.get_payload()
+        if not code:
+            raise PyiCloudFailedMFAException(
+                "Internal error: did not get code for SUBMITTED_MFA_CODE status"
+            )
+
+        if not icloud.validate_2fa_code(code):
+            if not status_exchange.set_error("Failed to verify two-factor authentication code"):
+                raise PyiCloudFailedMFAException("Failed to change status of invalid code")
+            # dropped back to AWAITING_MFA_TRIGGER; loop and wait for another explicit trigger
+            continue
+
+        status_exchange.replace_status(Status.VALIDATING_MFA_CODE, Status.IDLE)  # done
+        logger.info(
+            "Great, you're all set up. The script can now be run without "
+            "user interaction until 2FA expires.\n"
+            "You can set up a notification script for when "
+            "the two-factor authentication expires.\n"
+            "(Use --notification-script to configure this.)"
+        )
+        return

@@ -3,6 +3,7 @@ build/
 dist/
 wheelhouse/
 icloudpd.egg-info
+*.egg-info/
 tests/fixtures/**
 __pycache__
 .pytest_cache
@@ -32,3 +33,5 @@ node_modules/
 .claude/
 .superpowers/
 uv.lock
+.env
+integrations/telegram-bot/e2e-local/

@@ -1,0 +1,18 @@
+<div hx-get="/status" hx-trigger="every 5s" hx-swap="outerHTML">
+    <fieldset>
+        <legend>Authentication{% if current_user %} - {{ current_user }}{% endif %}</legend>
+        {% if error %}
+        <ul class="list-group list-group-flush">
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <div class="fw-bold">{{ error }}</div>
+            </li>
+        </ul>
+        {% endif %}
+        <div class="col-12 mb-3">
+            <label class="form-label">Two-factor authentication is required for {{ current_user if current_user else 'iCloud account' }}</label>
+        </div>
+        <div class="col-12">
+            <button hx-post="/trigger-push" hx-swap="none" class="btn btn-primary">Send code</button>
+        </div>
+    </fieldset>
+</div>

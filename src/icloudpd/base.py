@@ -130,23 +130,23 @@ def get_password_from_webui(
     logger: Logger, status_exchange: StatusExchange, _user: str
 ) -> str | None:
     """Request two-factor authentication through Webui."""
-    if not status_exchange.replace_status(Status.NO_INPUT_NEEDED, Status.NEED_PASSWORD):
-        logger.error("Expected NO_INPUT_NEEDED, but got something else")
+    if not status_exchange.replace_status(Status.IDLE, Status.AWAITING_PASSWORD):
+        logger.error("Expected IDLE, but got something else")
         return None
 
     # wait for input
     while True:
         status = status_exchange.get_status()
-        if status == Status.NEED_PASSWORD:
+        if status == Status.AWAITING_PASSWORD:
             time.sleep(1)
         else:
             break
-    if status_exchange.replace_status(Status.SUPPLIED_PASSWORD, Status.CHECKING_PASSWORD):
+    if status_exchange.replace_status(Status.SUBMITTED_PASSWORD, Status.VALIDATING_PASSWORD):
         password = status_exchange.get_payload()
         if not password:
-            logger.error("Internal error: did not get password for SUPPLIED_PASSWORD status")
+            logger.error("Internal error: did not get password for SUBMITTED_PASSWORD status")
             status_exchange.replace_status(
-                Status.CHECKING_PASSWORD, Status.NO_INPUT_NEEDED
+                Status.VALIDATING_PASSWORD, Status.IDLE
             )  # TODO Error
             return None
         return password
@@ -155,7 +155,7 @@ def get_password_from_webui(
 
 
 def update_password_status_in_webui(status_exchange: StatusExchange, _u: str, _p: str) -> None:
-    status_exchange.replace_status(Status.CHECKING_PASSWORD, Status.NO_INPUT_NEEDED)
+    status_exchange.replace_status(Status.VALIDATING_PASSWORD, Status.IDLE)
 
 
 def update_auth_error_in_webui(status_exchange: StatusExchange, error: str) -> bool:

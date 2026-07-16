@@ -1,0 +1,35 @@
+services:
+  icloudpd:
+    image: icloudpd/icloudpd:latest
+    command:
+      - "--mfa-provider"
+      - "webui"
+      - "--watch-with-interval"
+      - "3600"
+      - "--username"
+      - "jdoe@icloud.com"
+      - "--directory"
+      - "/data"
+      - "--notification-script"
+      - "/usr/local/bin/notification_script.py"
+    volumes:
+      - ./data:/data
+      - ./config:/home/icloudpd/.pyicloud
+      - ./notification_script.py:/usr/local/bin/notification_script.py:ro
+    environment:
+      TELEGRAM_BOT_NOTIFY_URL: "http://telegram-bot:8090/notify"
+    networks:
+      - icloudpd-net
+
+  telegram-bot:
+    build: .
+    environment:
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      TELEGRAM_ALLOWED_CHAT_IDS: "${TELEGRAM_ALLOWED_CHAT_IDS}"
+      ICLOUDPD_BASE_URL: "http://icloudpd:8080"
+    networks:
+      - icloudpd-net
+
+networks:
+  icloudpd-net:
+    driver: bridge
