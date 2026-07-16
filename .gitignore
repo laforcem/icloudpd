@@ -31,3 +31,4 @@ node_modules/
 
 .claude/
 .superpowers/
+uv.lock
