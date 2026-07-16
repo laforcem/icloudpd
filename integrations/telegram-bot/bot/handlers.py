@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import requests
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
@@ -12,6 +13,7 @@ from bot.messages import (
     code_failed_keyboard,
     code_failed_text,
     code_requested_text,
+    connection_lost_text,
     exited_text,
     push_not_pending_text,
 )
@@ -68,7 +70,13 @@ async def handle_message(
         return
 
     code = (message.text or "").strip()
-    submitted = await asyncio.to_thread(client.submit_code, code)
+    try:
+        submitted = await asyncio.to_thread(client.submit_code, code)
+    except requests.exceptions.RequestException:
+        state.stop_awaiting_code(chat_id)
+        await message.answer(connection_lost_text())
+        return
+
     if not submitted:
         state.stop_awaiting_code(chat_id)
         await message.answer(push_not_pending_text())
@@ -77,8 +85,15 @@ async def handle_message(
     success, error = await asyncio.to_thread(wait_for_mfa_result, client)
     state.stop_awaiting_code(chat_id)
     if success:
-        status = await asyncio.to_thread(client.get_status)
-        await message.answer(code_accepted_success_text(status.current_user or ""))
+        try:
+            status = await asyncio.to_thread(client.get_status)
+            username = status.current_user or ""
+        except requests.exceptions.RequestException:
+            # We already know the code was accepted (wait_for_mfa_result
+            # returned success); losing the connection just for this
+            # username lookup shouldn't turn a success into an error.
+            username = ""
+        await message.answer(code_accepted_success_text(username))
     else:
         await message.answer(
             code_failed_text(error or "Verification failed"),

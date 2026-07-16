@@ -3,6 +3,7 @@ from bot.messages import (
     code_failed_keyboard,
     code_failed_text,
     code_requested_text,
+    connection_lost_text,
     session_expired_text,
     start_2fa_keyboard,
 )
@@ -27,6 +28,16 @@ def test_code_requested_text_includes_username() -> None:
 
 def test_code_accepted_success_text_includes_username() -> None:
     assert "jdoe@icloud.com" in code_accepted_success_text("jdoe@icloud.com")
+
+
+def test_code_accepted_success_text_handles_unknown_username() -> None:
+    text = code_accepted_success_text("")
+
+    assert "✅" in text
+
+
+def test_connection_lost_text_is_non_empty() -> None:
+    assert connection_lost_text()
 
 
 def test_code_failed_text_includes_error() -> None:

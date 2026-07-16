@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from typing import Callable, Protocol
 
+import requests
+
 from bot.icloudpd_client import MfaStatus
 
 
@@ -19,7 +21,13 @@ def wait_for_mfa_result(
     """Poll icloudpd until a submitted code resolves. Returns (success, error_message)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        status = client.get_status()
+        try:
+            status = client.get_status()
+        except requests.exceptions.RequestException:
+            # Transient - e.g. a brief network blip, or icloudpd's webserver
+            # not yet back up after a restart. Keep polling until the timeout.
+            sleep(poll_interval)
+            continue
         if status.status == "IDLE":
             return True, None
         if status.status == "AWAITING_MFA_TRIGGER" and status.error:

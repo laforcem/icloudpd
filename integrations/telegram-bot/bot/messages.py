@@ -22,7 +22,14 @@ def push_not_pending_text() -> str:
 
 
 def code_accepted_success_text(username: str) -> str:
-    return f"✅ Authenticated for {username}."
+    return f"✅ Authenticated{f' for {username}' if username else ''}."
+
+
+def connection_lost_text() -> str:
+    return (
+        "⚠️ Lost the connection to icloudpd while checking the result. "
+        "The code may still have been accepted - check icloudpd's own logs."
+    )
 
 
 def code_failed_keyboard() -> InlineKeyboardMarkup:

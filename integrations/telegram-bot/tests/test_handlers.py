@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import requests
 
 from bot.handlers import handle_exit, handle_message, handle_start_or_retry
 from bot.icloudpd_client import MfaStatus
@@ -29,6 +30,28 @@ class FakeClient:
         if len(self._status_sequence) > 1:
             return self._status_sequence.pop(0)
         return self._status_sequence[0]
+
+
+class SubmitCodeRaisesClient(FakeClient):
+    def submit_code(self, code: str) -> bool:
+        raise requests.exceptions.ConnectionError("Remote end closed connection")
+
+
+class ConnectionDropsAfterSuccessClient(FakeClient):
+    """Simulates icloudpd's server disappearing right after the code is validated
+    (e.g. a short-lived --auth-only process exiting): the first get_status()
+    call (inside wait_for_mfa_result) sees IDLE, but the second (handle_message's
+    own follow-up call to fetch the username for the success message) fails."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self._calls = 0
+
+    def get_status(self) -> MfaStatus:
+        self._calls += 1
+        if self._calls == 1:
+            return MfaStatus("IDLE", None, "jdoe@icloud.com")
+        raise requests.exceptions.ConnectionError("Remote end closed connection")
 
 
 def make_callback(chat_id: int, data: str) -> SimpleNamespace:
@@ -143,4 +166,32 @@ async def test_message_reports_failure_with_retry_buttons() -> None:
     args, kwargs = message.answer.await_args
     assert "Failed to verify" in args[0]
     assert "reply_markup" in kwargs
+    assert state.is_awaiting_code(1) is False
+
+
+@pytest.mark.asyncio
+async def test_message_reports_connection_lost_when_submit_raises() -> None:
+    client = SubmitCodeRaisesClient()
+    state = ChatState()
+    state.start_awaiting_code(1)
+    message = make_message(chat_id=1, text="123456")
+
+    await handle_message(message, client, state, allowed_chat_ids=frozenset({1}))
+
+    message.answer.assert_awaited_once()
+    assert "connection" in message.answer.await_args.args[0].lower()
+    assert state.is_awaiting_code(1) is False
+
+
+@pytest.mark.asyncio
+async def test_message_still_reports_success_if_username_lookup_fails() -> None:
+    client = ConnectionDropsAfterSuccessClient(submit_code_result=True)
+    state = ChatState()
+    state.start_awaiting_code(1)
+    message = make_message(chat_id=1, text="123456")
+
+    await handle_message(message, client, state, allowed_chat_ids=frozenset({1}))
+
+    message.answer.assert_awaited_once()
+    assert "✅" in message.answer.await_args.args[0]
     assert state.is_awaiting_code(1) is False
