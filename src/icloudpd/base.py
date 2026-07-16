@@ -424,6 +424,13 @@ def _process_all_users_once(
                 str(user_config.notification_script) if user_config.notification_script else None,
             )
 
+            notify_mfa_result = partial(
+                mfa_result_notificator_builder,
+                logger,
+                user_config.username,
+                str(user_config.notification_script) if user_config.notification_script else None,
+            )
+
             # Use core_single_run since we've disabled watch at this level
             logger.info(f"Processing user: {user_config.username}")
             result = core_single_run(
@@ -435,6 +442,7 @@ def _process_all_users_once(
                 passer,
                 downloader,
                 notificator,
+                notify_mfa_result,
                 lp_filename_generator,
             )
 
@@ -461,6 +469,27 @@ def notificator_builder(
         username=username,
         message=f"{username}'s icloudpd session needs two-step authentication. "
         "Tap Start 2FA below to continue.",
+    )
+    notifications.notify(logger, notification_script, event)
+
+
+def mfa_result_notificator_builder(
+    logger: logging.Logger,
+    username: str,
+    notification_script: str | None,
+    success: bool,
+    error: str | None,
+) -> None:
+    message = (
+        f"{username}'s two-factor authentication code was accepted."
+        if success
+        else f"{username}'s two-factor authentication code was rejected: {error}"
+    )
+    event = notifications.build_event(
+        event_type="mfa_result",
+        username=username,
+        message=message,
+        data={"success": success, "error": error},
     )
     notifications.notify(logger, notification_script, event)
 
@@ -875,6 +904,7 @@ def core_single_run(
         [manifest.ManifestHandle | None, PyiCloudService, Counter, PhotoAsset], bool
     ],
     notificator: Callable[[], None],
+    notify_mfa_result: Callable[[bool, str | None], None],
     lp_filename_generator: Callable[[str], str],
 ) -> int:
     """Download all iCloud photos to a local directory for a single execution (no watch loop)"""
@@ -902,6 +932,7 @@ def core_single_run(
                 status_exchange,
                 user_config.username,
                 notificator,
+                notify_mfa_result,
                 partial(append_response, captured_responses),
                 user_config.cookie_directory,
                 os.environ.get("CLIENT_ID"),

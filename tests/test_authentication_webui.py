@@ -30,7 +30,9 @@ def test_does_not_trigger_push_until_asked() -> None:
     logger = setup_logger()
 
     thread = threading.Thread(
-        target=request_2fa_web, args=(icloud, logger, status_exchange), daemon=True
+        target=request_2fa_web,
+        args=(icloud, logger, status_exchange, lambda success, error: None),
+        daemon=True,
     )
     thread.start()
     try:
@@ -48,7 +50,9 @@ def test_successful_code_after_explicit_trigger() -> None:
     logger = setup_logger()
 
     thread = threading.Thread(
-        target=request_2fa_web, args=(icloud, logger, status_exchange), daemon=True
+        target=request_2fa_web,
+        args=(icloud, logger, status_exchange, lambda success, error: None),
+        daemon=True,
     )
     thread.start()
 
@@ -74,7 +78,9 @@ def test_failed_code_drops_back_to_awaiting_trigger() -> None:
     logger = setup_logger()
 
     thread = threading.Thread(
-        target=request_2fa_web, args=(icloud, logger, status_exchange), daemon=True
+        target=request_2fa_web,
+        args=(icloud, logger, status_exchange, lambda success, error: None),
+        daemon=True,
     )
     thread.start()
 
@@ -95,3 +101,29 @@ def test_failed_code_drops_back_to_awaiting_trigger() -> None:
     assert not thread.is_alive()
     assert status_exchange.get_status() == Status.IDLE
     assert icloud.trigger_push_notification.call_count == 2
+
+
+def test_successful_code_notifies_mfa_result_success() -> None:
+    status_exchange = StatusExchange()
+    icloud = make_icloud([True])
+    logger = setup_logger()
+    notified: List[tuple] = []
+
+    def notify_mfa_result(success: bool, error: str | None) -> None:
+        notified.append((success, error))
+
+    thread = threading.Thread(
+        target=request_2fa_web,
+        args=(icloud, logger, status_exchange, notify_mfa_result),
+        daemon=True,
+    )
+    thread.start()
+
+    wait_for_status(status_exchange, Status.AWAITING_MFA_TRIGGER)
+    status_exchange.trigger_mfa()
+    wait_for_status(status_exchange, Status.AWAITING_MFA_CODE)
+    status_exchange.set_payload("123456")
+    thread.join(timeout=2.0)
+
+    assert status_exchange.get_status() == Status.IDLE
+    assert notified == [(True, None)]
