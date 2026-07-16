@@ -28,4 +28,22 @@ own Telegram chat ID.
    failure, confirming the bot goes quiet and a later "Start 2FA" tap on the
    original message still works.
 
+## Proactive session-expiry warning (issue #9)
+
+10. Run icloudpd against an account/fixture whose stored session is inside the
+    configured `--session-expiry-warning-days` window (e.g. `--session-expiry-warning-days 9999`
+    against any valid session, to avoid needing an actual near-expiry cookie).
+11. Confirm the bot DMs you a warning message ("`<username>`'s iCloud session expires
+    in N day(s)...") with a **Refresh session now** button, separate from the
+    **Start 2FA** message used by the reactive flow.
+12. Tap **Refresh session now**. Confirm the bot replies confirming the refresh was
+    requested, and that icloudpd's own logs show a new login attempt starting shortly
+    after (within one watch-loop wake, not waiting out the full `--watch-with-interval`).
+13. Confirm this new login attempt actually challenges 2FA (since the stored session
+    token was cleared) and that the existing **Start 2FA** flow (steps 4-9 above) takes
+    over from there, completing normally.
+14. Tap **Refresh session now** for a username not configured on this icloudpd instance
+    (simulate via a stale/incorrect `TELEGRAM_ALLOWED_CHAT_IDS` setup or a manually
+    crafted callback if needed). Confirm the bot shows an alert and does not crash.
+
 Record the outcome (pass/fail per step) in the PR description before merging.
