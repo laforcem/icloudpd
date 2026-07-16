@@ -21,7 +21,7 @@ async def test_session_expiring_soon_event_invokes_its_own_handler() -> None:
     async def on_session_expiring_soon(event: dict[str, Any]) -> None:
         expiring.append(event)
 
-    app = build_notify_app(on_session_expired, on_session_expiring_soon)
+    app = build_notify_app(on_session_expired, on_session_expiring_soon, _noop)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -47,7 +47,7 @@ async def test_session_expired_event_invokes_handler() -> None:
     async def on_session_expired(event: dict[str, Any]) -> None:
         received.append(event)
 
-    app = build_notify_app(on_session_expired, _noop)
+    app = build_notify_app(on_session_expired, _noop, _noop)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -79,7 +79,7 @@ async def test_unhandled_event_type_does_not_invoke_handler() -> None:
     async def on_session_expired(event: dict[str, Any]) -> None:
         received.append(event)
 
-    app = build_notify_app(on_session_expired, _noop)
+    app = build_notify_app(on_session_expired, _noop, _noop)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -94,3 +94,29 @@ async def test_unhandled_event_type_does_not_invoke_handler() -> None:
 
         assert response.status == 204
     assert received == []
+
+
+@pytest.mark.asyncio
+async def test_mfa_result_event_invokes_its_own_handler() -> None:
+    received: list[dict[str, Any]] = []
+
+    async def on_mfa_result(event: dict[str, Any]) -> None:
+        received.append(event)
+
+    app = build_notify_app(_noop, _noop, on_mfa_result)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post(
+            "/notify",
+            json={
+                "event_type": "mfa_result",
+                "timestamp": "2026-07-16T00:00:00+00:00",
+                "username": "jdoe@icloud.com",
+                "message": "jdoe@icloud.com's two-factor authentication code was accepted.",
+                "data": {"success": True, "error": None},
+            },
+        )
+
+        assert response.status == 204
+    assert len(received) == 1
+    assert received[0]["event_type"] == "mfa_result"
+    assert received[0]["data"] == {"success": True, "error": None}
