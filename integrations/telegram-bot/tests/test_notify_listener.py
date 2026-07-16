@@ -2,7 +2,6 @@ from typing import Any
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from bot.notify_listener import build_notify_app
 
 

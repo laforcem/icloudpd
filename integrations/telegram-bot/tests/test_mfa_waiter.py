@@ -1,7 +1,5 @@
 import asyncio
 
-import pytest
-
 from bot.mfa_waiter import MfaResultWaiter
 
 

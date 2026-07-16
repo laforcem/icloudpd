@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 import requests
-
 from bot.handlers import handle_exit, handle_force_reauth, handle_message, handle_start_or_retry
 from bot.mfa_waiter import MfaResultWaiter
 from bot.state import ChatState

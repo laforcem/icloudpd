@@ -1,6 +1,6 @@
 import threading
 import time
-from typing import List
+from typing import List, Tuple
 from unittest import mock
 
 from icloudpd.authentication import request_2fa_web
@@ -107,7 +107,7 @@ def test_successful_code_notifies_mfa_result_success() -> None:
     status_exchange = StatusExchange()
     icloud = make_icloud([True])
     logger = setup_logger()
-    notified: List[tuple] = []
+    notified: List[Tuple[bool, str | None]] = []
 
     def notify_mfa_result(success: bool, error: str | None) -> None:
         notified.append((success, error))
@@ -133,7 +133,7 @@ def test_failed_code_notifies_mfa_result_failure() -> None:
     status_exchange = StatusExchange()
     icloud = make_icloud([False, True])
     logger = setup_logger()
-    notified: List[tuple] = []
+    notified: List[Tuple[bool, str | None]] = []
 
     def notify_mfa_result(success: bool, error: str | None) -> None:
         notified.append((success, error))

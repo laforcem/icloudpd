@@ -7,7 +7,6 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
 from bot.icloudpd_client import IcloudpdClient
-from bot.mfa_waiter import MfaResultWaiter
 from bot.messages import (
     code_accepted_success_text,
     code_failed_keyboard,
@@ -19,6 +18,7 @@ from bot.messages import (
     force_reauth_requested_text,
     push_not_pending_text,
 )
+from bot.mfa_waiter import MfaResultWaiter
 from bot.state import ChatState
 
 

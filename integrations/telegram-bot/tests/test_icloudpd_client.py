@@ -1,5 +1,4 @@
 import responses
-
 from bot.icloudpd_client import IcloudpdClient
 
 
