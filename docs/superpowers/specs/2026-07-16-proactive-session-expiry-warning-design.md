@@ -13,10 +13,13 @@ In scope:
 - A configurable warning window (days-before-expiry to start warning) and a configurable max notification cadence (how often to re-warn while inside the window), both per-user config.
 - Small persistent state (last-warned timestamp) so cadence is honored across watch-loop iterations and process restarts.
 
+- A `POST /force-reauth` endpoint and Telegram bot handling for `session_expiring_soon`, so a human can act on the warning instead of just reading it — see Telegram integration below.
+
 Out of scope:
 - Any change to the reactive `session_expired` event or its call site — that continues to fire exactly as it does today when a run actually hits the 2FA/2SA challenge.
 - A general-purpose local key/value or SQL store. This feature's persistence need is a single timestamp; see Architecture for why that doesn't warrant new database infrastructure.
 - Non-cookie-based expiry detection (e.g. probing an endpoint to ask iCloud how much session time is left) — cookie `Expires` is sufficient and requires no extra network calls.
+- Any change to the `AWAITING_MFA_TRIGGER` state machine or the human-confirms-before-push design from `2026-07-15-telegram-2fa-sidecar-design.md` — the new endpoint below feeds into that machine unchanged, it doesn't alter it.
 
 ## Architecture
 
@@ -81,9 +84,37 @@ Per-user (not global) because `notification_script` is already per-user, and the
 
 Matches `manifest.py`/`notifications.py`: best-effort, never raised into the caller. Cookie-jar read issues, state-file read/write failures, and `notify()`'s own failure modes are all logged and swallowed — this check running (or failing to run) must never block or fail a download.
 
+## Telegram integration
+
+`2026-07-15-telegram-2fa-sidecar-design.md` builds a working, human-confirmed 2FA flow, but only *reactively*: it can only act once icloudpd has already hit `requires_2fa` and entered `AWAITING_MFA_TRIGGER`. `session_expiring_soon` fires earlier than that, while the session is still valid — tapping a button at that point can't reuse `/trigger-push` directly, because a plain re-authentication attempt right now would just silently pass the still-good session-token check (`PyiCloudService.authenticate()`, `pyicloud_ipd/base.py:291-298`) and never ask Apple for 2FA at all.
+
+**The missing link is forcing a real login attempt, not skipping straight to the push.** `PyiCloudService` stores its session token in a file separate from the cookie jar — `session_path` (`pyicloud_ipd/base.py:130-137, 623-629`), `<cookie_directory>/<sanitized_apple_id>.session`. Deleting that file makes the next `authenticate()` call skip the token fast-path and perform a full fresh sign-in, which does trigger a real 2FA challenge (`requires_2fa` → `AWAITING_MFA_TRIGGER`) — exactly the state the existing sidecar flow already knows how to drive to completion. No changes to `status.py`'s state machine, `authentication.py`'s request functions, or the deliberate human-confirms-before-push design are needed; this only supplies the missing trigger to *enter* that machine before a run would have hit it on its own.
+
+**New endpoint:**
+
+```
+POST /force-reauth
+body: {"username": "..."}
+```
+
+Looks up the matching `UserConfig` via `StatusExchange.get_user_configs()` (already exposed, `status.py:115-121`), computes that account's `session_path` the same way `PyiCloudService` does, deletes it best-effort (missing file is a silent no-op, not an error), then sets `progress.resume = True` — reusing the existing `/resume` mechanism (`server/__init__.py:99-101`) that already wakes the watch loop early from its interval sleep. No new state-machine transitions.
+
+**Bot flow addition (`integrations/telegram-bot/`):**
+
+1. `session_expiring_soon` fires and is forwarded to the bot the same way `session_expired` is today (see the sidecar design's bot flow step 1).
+2. Bot sends a DM naming the account and days remaining, with one button — e.g. "Refresh session now" — that calls `POST /force-reauth` with that `username`.
+3. Within moments, the watch loop wakes, re-authenticates for real, and — because the session token was cleared — Apple requires 2FA. This fires `session_expired` and enters `AWAITING_MFA_TRIGGER`, which the bot already handles: it sends the existing "Start 2FA" message and button (sidecar design, bot flow step 2) completely unchanged.
+4. From there, the rest of the flow (push trigger, code entry, success/failure) is exactly what's already built — no new code path.
+
+This is a deliberate two-tap flow, not one button that also fires the push: the sidecar design specifically split "session needs 2FA" from "push has been sent" so a push is never sent without a human explicitly asking (`2026-07-15-telegram-2fa-sidecar-design.md`, "Problem with today's push behavior"). Collapsing that gate for this entry point only would mean two different code paths could trigger a real push to your phone — one gated, one not. Keeping `/force-reauth` and `/trigger-push` as separate, sequential taps preserves that guarantee everywhere.
+
+This also means `2026-07-15-telegram-2fa-sidecar-design.md`'s non-goal ("Proactive expiry warning... is a separate, valuable feature, tracked as issue #9. Not part of this design.") is superseded for the specific piece of wiring a warning into the bot's existing state machine — the sidecar design's own flow and non-goals are otherwise unchanged.
+
 ## Testing
 
 - Unit tests for expiry computation: earliest-of-two-cookies selection, missing-cookie skip, cookie present but no `expires` attribute.
 - Unit tests for state-file read/write: fresh file creation, cadence suppression (warned recently → no second notify), cadence expiry (warned outside interval → notify again), corrupt/missing file treated as never-warned.
 - Integration-style test at the `core_single_run` call site: successful auth with a near-expiry cookie fixture produces a `session_expiring_soon` event on the notification script's stdin, following the same pattern as the existing `test_2sa_required_notification_script_receives_json_event` style test.
 - No new VCR cassette needed — expiry cookies already appear in existing fixtures/cassettes.
+- `POST /force-reauth`: unit tests for username lookup (found/not-found → 404), session-file deletion (present/absent, both succeed), and `progress.resume` being set on success.
+- Sidecar e2e (excluded from core CI, matching the sidecar design's existing testing section): full flow from a `session_expiring_soon` event through "Refresh session now", the automatic transition into the existing "Start 2FA" prompt, and on through code entry — run manually before cutting a release that includes it.
