@@ -730,7 +730,11 @@ def cli() -> int:
             )
             return 2
         else:
-            return run_with_configs(global_ns, user_nses)
+            try:
+                return run_with_configs(global_ns, user_nses)
+            except ConfigFileError as error:
+                print(error)
+                return 2
 
 
 def validate_folder_structure(folder_structure: str) -> str:

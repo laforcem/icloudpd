@@ -708,3 +708,41 @@ def test_cli_reports_clear_error_for_malformed_config_file(
     assert exit_code == 2
     captured = capsys.readouterr()
     assert "failed to parse YAML" in captured.out or "failed to parse YAML" in captured.err
+
+
+def test_cli_reports_clear_error_when_run_with_configs_raises_config_file_error(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Exercises the `run_with_configs` error path (e.g. an unreadable
+    # `password_file` discovered during a real run, not just at --print-config
+    # time) — a ConfigFileError raised there must produce a clean CLI error,
+    # not a raw traceback, the same as one raised during config-file parsing.
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        _yaml.safe_dump({"users": [{"username": "you@icloud.com", "directory": "/data"}]})
+    )
+
+    import sys as _sys
+
+    import icloudpd.cli as cli_module
+    from icloudpd.config_file import ConfigFileError
+
+    def _raise_config_file_error(
+        _global_config: GlobalConfig, _user_configs: object
+    ) -> int:
+        raise ConfigFileError("password_file '/run/secrets/missing' could not be read")
+
+    monkeypatch.setattr(cli_module, "run_with_configs", _raise_config_file_error)
+
+    old_argv = _sys.argv
+    _sys.argv = ["icloudpd", "--config", str(config_path)]
+    try:
+        exit_code = cli_module.cli()
+    finally:
+        _sys.argv = old_argv
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "could not be read" in captured.out or "could not be read" in captured.err
