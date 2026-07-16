@@ -150,6 +150,22 @@ def add_options_for_user(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
         "describing the event on stdin.",
         default=None,
     )
+    cloned.add_argument(
+        "--session-expiry-warning-days",
+        type=int,
+        help="Start warning this many days before the iCloud session's auth cookies expire. "
+        "Set to 0 to disable the proactive warning (the reactive session_expired event, "
+        "fired when a run actually hits the 2FA/2SA challenge, is unaffected). "
+        "Default: %(default)s",
+        default=7,
+    )
+    cloned.add_argument(
+        "--session-expiry-notification-interval-hours",
+        type=int,
+        help="Minimum hours between repeated session-expiry warnings while inside the "
+        "warning window. Default: %(default)s",
+        default=24,
+    )
     deprecated_kwargs: dict[str, Any] = {}
     if sys.version_info >= (3, 13):
         deprecated_kwargs["deprecated"] = True
@@ -415,6 +431,8 @@ def map_to_config(user_ns: argparse.Namespace) -> UserConfig:
         folder_structure=user_ns.folder_structure,
         set_exif_datetime=user_ns.set_exif_datetime,
         notification_script=user_ns.notification_script,
+        session_expiry_warning_days=user_ns.session_expiry_warning_days,
+        session_expiry_notification_interval_hours=user_ns.session_expiry_notification_interval_hours,
         delete_after_download=user_ns.delete_after_download,
         keep_icloud_recent_days=user_ns.keep_icloud_recent_days,
         dry_run=user_ns.dry_run,

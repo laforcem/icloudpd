@@ -37,7 +37,7 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from tzlocal import get_localzone
 
 from foundation.core import compose, identity, map_, partial_1_1
-from icloudpd import download, exif_datetime, manifest, notifications
+from icloudpd import download, exif_datetime, manifest, notifications, session_expiry
 from icloudpd.authentication import authenticator
 from icloudpd.autodelete import autodelete_photos
 from icloudpd.config import GlobalConfig, UserConfig
@@ -459,11 +459,8 @@ def notificator_builder(
     event = notifications.build_event(
         event_type="session_expired",
         username=username,
-        message=(
-            f"{username}'s two-step authentication has expired for icloudpd. "
-            "Please log in to your server and run the script manually to update "
-            "two-step authentication."
-        ),
+        message=f"{username}'s icloudpd session needs two-step authentication. "
+        "Tap Start 2FA below to continue.",
     )
     notifications.notify(logger, notification_script, event)
 
@@ -915,6 +912,16 @@ def core_single_run(
 
             # turn off response capture
             icloud.response_observer = None
+
+            session_expiry.check_and_notify(
+                logger,
+                icloud,
+                user_config.username,
+                user_config.cookie_directory,
+                str(user_config.notification_script) if user_config.notification_script else None,
+                user_config.session_expiry_warning_days,
+                user_config.session_expiry_notification_interval_hours,
+            )
 
             if user_config.auth_only:
                 logger.info("Authentication completed successfully")

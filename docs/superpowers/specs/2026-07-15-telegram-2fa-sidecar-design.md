@@ -10,7 +10,7 @@ This is being prototyped against a spare, unused bot token before any change tou
 
 ## Non-goals
 
-- **Proactive expiry warning** (alerting before a run actually blocks on 2FA, using the cookie's own expiry timestamp) is a separate, valuable feature, tracked as [issue #9](https://github.com/laforcem/icloudpd/issues/9). Not part of this design.
+- **Proactive expiry warning** (alerting before a run actually blocks on 2FA, using the cookie's own expiry timestamp) is a separate feature, tracked as [issue #9](https://github.com/laforcem/icloudpd/issues/9), and not part of this design — including the detection logic and the `session_expiring_soon` event itself. The bot-side wiring that lets a human act on that warning (a `POST /force-reauth` endpoint and a new button) is specified in `2026-07-16-proactive-session-expiry-warning-design.md`'s Telegram integration section; it feeds into the state machine below unchanged rather than altering it.
 - **Multi-device SMS selection.** The WebUI-driven auth path (`request_2fa_web`) only supports the single trusted-device push flow (`authentication.py:250-262`) — the SMS/device-index branch (`request_2fa`) is a separate console-only path the WebUI never uses. Nothing to select, so no device-choice buttons.
 - **Group chat support.** Not designed against, but not deliberately prevented either — Telegram inline buttons work the same in group chats; if it happens to work there, fine, but DMs are the target.
 - **Maintenance commitment.** This ships as an optional, unsupported integration (see Repo layout). It is explicitly not held to the same bar as core icloudpd — if Telegram's API changes and breaks it, that's a "fix it if you feel like it" problem, not a tracked bug.
@@ -73,4 +73,4 @@ Bot implemented with **aiogram** (async-first, clean inline-keyboard/callback_qu
 
 ## Open questions
 
-None blocking. Proactive expiry warning (issue #9) is intentionally out of scope here.
+None blocking. Proactive expiry warning (issue #9) is its own design; see the non-goals note above for how the two connect.

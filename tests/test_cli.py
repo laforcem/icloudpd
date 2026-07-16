@@ -532,3 +532,26 @@ class CliTestCase(TestCase):
         self.assertEqual(result.exit_code, 2, "exit code")
 
         self.assertFalse(os.path.exists(base_dir), f"{base_dir} exists")
+
+
+def test_session_expiry_options_parse_custom_values() -> None:
+    _global_config, user_configs = parse(
+        [
+            "--directory",
+            "abc",
+            "--username",
+            "u1",
+            "--session-expiry-warning-days",
+            "3",
+            "--session-expiry-notification-interval-hours",
+            "12",
+        ]
+    )
+    assert user_configs[0].session_expiry_warning_days == 3
+    assert user_configs[0].session_expiry_notification_interval_hours == 12
+
+
+def test_session_expiry_options_default_values() -> None:
+    _global_config, user_configs = parse(["--directory", "abc", "--username", "u1"])
+    assert user_configs[0].session_expiry_warning_days == 7
+    assert user_configs[0].session_expiry_notification_interval_hours == 24

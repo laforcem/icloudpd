@@ -33,6 +33,8 @@ class _DefaultConfig:
     folder_structure: str
     set_exif_datetime: bool
     notification_script: pathlib.Path | None
+    session_expiry_warning_days: int = 7
+    session_expiry_notification_interval_hours: int = 24
     delete_after_download: bool
     keep_icloud_recent_days: int | None
     dry_run: bool

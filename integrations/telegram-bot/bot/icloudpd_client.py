@@ -22,6 +22,12 @@ class IcloudpdClient:
         response = requests.post(f"{self._base_url}/trigger-push", timeout=self._timeout)
         return response.status_code == 204
 
+    def force_reauth(self, username: str) -> bool:
+        response = requests.post(
+            f"{self._base_url}/force-reauth", data={"username": username}, timeout=self._timeout
+        )
+        return response.status_code == 204
+
     def submit_code(self, code: str) -> bool:
         response = requests.post(
             f"{self._base_url}/code", data={"code": code}, timeout=self._timeout

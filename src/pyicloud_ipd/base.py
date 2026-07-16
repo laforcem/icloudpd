@@ -59,6 +59,22 @@ def origin_referer_headers(input: str) -> Dict[str, str]:
     return {"Origin": input, "Referer": f"{input}/"}
 
 
+def sanitize_apple_id(apple_id: str) -> str:
+    """Strip an Apple ID down to word characters only, for safe use in filenames."""
+    return "".join(c for c in apple_id if match(r"\w", c))
+
+
+def session_file_path(cookie_directory: str, apple_id: str) -> str:
+    """Path to an account's session-token file, without needing a live PyiCloudService.
+
+    Mirrors PyiCloudService.session_path's naming scheme so callers that
+    don't hold a live session (e.g. a force-reauth trigger) can still
+    locate the file to clear it.
+    """
+    normalized_dir = path.expanduser(path.normpath(cookie_directory))
+    return path.join(normalized_dir, sanitize_apple_id(apple_id) + ".session")
+
+
 class TrustedPhoneContextProvider(NamedTuple):
     domain: str
     oauth_session: AuthenticatedSession
@@ -615,18 +631,12 @@ class PyiCloudService:
     @property
     def cookiejar_path(self) -> str:
         """Get path for cookiejar file."""
-        return path.join(
-            self._cookie_directory,
-            "".join([c for c in self.apple_id if match(r"\w", c)]),
-        )
+        return path.join(self._cookie_directory, sanitize_apple_id(self.apple_id))
 
     @property
     def session_path(self) -> str:
         """Get path for session data file."""
-        return path.join(
-            self._cookie_directory,
-            "".join([c for c in self.apple_id if match(r"\w", c)]) + ".session",
-        )
+        return path.join(self._cookie_directory, sanitize_apple_id(self.apple_id) + ".session")
 
     @property
     def requires_2sa(self) -> bool:

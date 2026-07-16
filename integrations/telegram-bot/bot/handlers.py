@@ -15,6 +15,8 @@ from bot.messages import (
     code_requested_text,
     connection_lost_text,
     exited_text,
+    force_reauth_not_found_text,
+    force_reauth_requested_text,
     push_not_pending_text,
 )
 from bot.state import ChatState
@@ -65,6 +67,31 @@ async def handle_exit(
     state.stop_awaiting_code(chat_id)
     await callback.answer()
     await callback.message.answer(exited_text())
+
+
+async def handle_force_reauth(
+    callback: CallbackQuery,
+    client: IcloudpdClient,
+    allowed_chat_ids: frozenset[int],
+) -> None:
+    chat_id = callback.message.chat.id
+    if chat_id not in allowed_chat_ids:
+        await callback.answer()
+        return
+
+    username = (callback.data or "").removeprefix("force_reauth:")
+    try:
+        triggered = await asyncio.to_thread(client.force_reauth, username)
+    except requests.exceptions.RequestException:
+        await callback.answer(connection_lost_text(), show_alert=True)
+        return
+
+    if not triggered:
+        await callback.answer(force_reauth_not_found_text(), show_alert=True)
+        return
+
+    await callback.answer()
+    await callback.message.answer(force_reauth_requested_text(username))
 
 
 async def handle_message(
@@ -125,6 +152,10 @@ def build_router(
     @router.callback_query(F.data == "exit_2fa")
     async def _exit(callback: CallbackQuery) -> None:
         await handle_exit(callback, state, allowed_chat_ids)
+
+    @router.callback_query(F.data.startswith("force_reauth:"))
+    async def _force_reauth(callback: CallbackQuery) -> None:
+        await handle_force_reauth(callback, client, allowed_chat_ids)
 
     @router.message()
     async def _message(message: Message) -> None:

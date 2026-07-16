@@ -6,6 +6,7 @@ import waitress
 from flask import Flask, Response, jsonify, make_response, render_template, request
 
 from icloudpd.status import Status, StatusExchange
+from pyicloud_ipd.base import session_file_path
 
 
 def build_app(logger: Logger, _status_exchange: StatusExchange) -> Flask:
@@ -95,6 +96,30 @@ def build_app(logger: Logger, _status_exchange: StatusExchange) -> Flask:
         if _status_exchange.trigger_mfa():
             return make_response("", 204)
         return make_response("Not awaiting an MFA trigger", 409)
+
+    @app.route("/force-reauth", methods=["POST"])
+    def force_reauth() -> Response:
+        username = request.form.get("username")
+        if not username:
+            return make_response("Missing username", 400)
+
+        matching = next(
+            (uc for uc in _status_exchange.get_user_configs() if uc.username == username),
+            None,
+        )
+        if matching is None:
+            return make_response("Unknown username", 404)
+
+        path = session_file_path(matching.cookie_directory, matching.username)
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as ex:
+            logger.warning("Could not remove session file %s: %s", path, ex)
+
+        _status_exchange.get_progress().resume = True
+        return make_response("", 204)
 
     @app.route("/resume", methods=["POST"])
     def resume() -> Response | str:
