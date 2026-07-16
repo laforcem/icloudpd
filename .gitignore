@@ -3,6 +3,7 @@ build/
 dist/
 wheelhouse/
 icloudpd.egg-info
+*.egg-info/
 tests/fixtures/**
 __pycache__
 .pytest_cache

@@ -60,6 +60,10 @@ async def handle_message(
     allowed_chat_ids: frozenset[int],
 ) -> None:
     chat_id = message.chat.id
+    # Not atomic with the submit_code below: two messages in quick succession
+    # from the same chat can both pass this check before either clears
+    # awaiting-code state. Harmless in practice (single human, occasional
+    # double-tap) but not a correctness guarantee against concurrent messages.
     if chat_id not in allowed_chat_ids or not state.is_awaiting_code(chat_id):
         return
 
