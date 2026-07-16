@@ -95,7 +95,7 @@ Any setting also given as a CLI arg overrides the config file for that run (e.g.
 
 **Secrets** are never written into this file directly. Any secret (currently: the account password, via `password_file`) is a path to a separate file containing the value, read once at startup — the same convention Docker/Kubernetes/Compose secrets and images like `postgres`'s `POSTGRES_PASSWORD_FILE` use. A literal `password:` key in the config file is rejected at startup.
 
-Run `icloudpd --config <path> --print-config` to see the fully resolved configuration (config file + any CLI overrides + built-in defaults, merged) without guessing at precedence by hand.
+Run `icloudpd --config <path> --print-config` to see how the config file, CLI overrides, and built-in defaults resolve for the most commonly used settings, without guessing at precedence by hand.
 
 See `docker-compose.example.yml` for a full Docker Compose deployment using this file, including how to source `password_file` from Compose's `secrets:` block.
 
