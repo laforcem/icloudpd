@@ -7,9 +7,11 @@ from bot.messages import (
     force_reauth_keyboard,
     force_reauth_not_found_text,
     force_reauth_requested_text,
+    manual_password_entry_text,
     session_expired_text,
     session_expiring_soon_text,
     start_2fa_keyboard,
+    webui_link_keyboard,
 )
 
 
@@ -74,3 +76,18 @@ def test_code_failed_keyboard_has_retry_and_exit() -> None:
     callback_datas = {button.callback_data for row in keyboard.inline_keyboard for button in row}
 
     assert callback_datas == {"retry_2fa", "exit_2fa"}
+
+
+def test_manual_password_entry_text_includes_username_and_message() -> None:
+    text = manual_password_entry_text("jdoe@icloud.com", "session expires in 3.0 day(s)")
+
+    assert "jdoe@icloud.com" in text
+    assert "3.0 day(s)" in text
+    assert "Re-enter your password in the web app" in text
+
+
+def test_webui_link_keyboard_embeds_url() -> None:
+    keyboard = webui_link_keyboard("http://vm101.lan:2011")
+
+    assert keyboard.inline_keyboard[0][0].text == "Open WebUI"
+    assert keyboard.inline_keyboard[0][0].url == "http://vm101.lan:2011"

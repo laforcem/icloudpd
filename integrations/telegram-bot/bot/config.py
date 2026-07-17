@@ -14,6 +14,14 @@ class BotConfig:
     allowed_chat_ids: frozenset[int]
     icloudpd_base_url: str
     notify_listener_port: int = 8090
+    # Browser-reachable WebUI URL (e.g. http://vm101.lan:2011), distinct from
+    # icloudpd_base_url which is the container-internal address this bot
+    # talks to over the Docker network. Not auto-detected -- a container has
+    # no reliable way to know its own LAN-facing address (NAT, port mapping,
+    # which interface). Optional: only used to add a deep-link button when a
+    # session refresh needs a human at the password prompt; omitted entirely
+    # if unset.
+    webui_external_url: str | None = None
 
 
 def _read_secret_file(file_env_var: str, raw_env_var: str) -> str:
@@ -43,9 +51,11 @@ def load_config() -> BotConfig:
     )
     icloudpd_base_url = os.environ.get("ICLOUDPD_BASE_URL", "http://icloudpd:2011")
     notify_listener_port = int(os.environ.get("NOTIFY_LISTENER_PORT", "8090"))
+    webui_external_url = os.environ.get("ICLOUDPD_WEBUI_EXTERNAL_URL") or None
     return BotConfig(
         bot_token=bot_token,
         allowed_chat_ids=allowed_chat_ids,
         icloudpd_base_url=icloudpd_base_url,
         notify_listener_port=notify_listener_port,
+        webui_external_url=webui_external_url,
     )

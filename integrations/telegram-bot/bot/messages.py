@@ -73,3 +73,16 @@ def force_reauth_requested_text(username: str) -> str:
 
 def force_reauth_not_found_text() -> str:
     return "That account isn't configured on this icloudpd instance."
+
+
+def manual_password_entry_text(username: str, message: str) -> str:
+    return (
+        f"⏳ {username}: {message}\n\n"
+        "Re-enter your password in the web app to avoid a stalled run."
+    )
+
+
+def webui_link_keyboard(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Open WebUI", url=url)]]
+    )

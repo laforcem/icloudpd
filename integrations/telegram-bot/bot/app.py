@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from aiogram import Bot, Dispatcher
@@ -10,9 +11,11 @@ from bot.handlers import build_router
 from bot.icloudpd_client import IcloudpdClient
 from bot.messages import (
     force_reauth_keyboard,
+    manual_password_entry_text,
     session_expired_text,
     session_expiring_soon_text,
     start_2fa_keyboard,
+    webui_link_keyboard,
 )
 from bot.mfa_waiter import MfaResultWaiter
 from bot.notify_listener import build_notify_app
@@ -38,9 +41,22 @@ def build_application(
 
     async def on_session_expiring_soon(event: dict[str, Any]) -> None:
         username = event.get("username", "unknown account")
-        text = session_expiring_soon_text(username, event.get("message", ""))
-        for chat_id in config.allowed_chat_ids:
-            await bot.send_message(chat_id, text, reply_markup=force_reauth_keyboard(username))
+        message = event.get("message", "")
+        if await asyncio.to_thread(client.password_requires_manual_entry):
+            text = manual_password_entry_text(username, message)
+            keyboard = (
+                webui_link_keyboard(config.webui_external_url)
+                if config.webui_external_url
+                else None
+            )
+            for chat_id in config.allowed_chat_ids:
+                await bot.send_message(chat_id, text, reply_markup=keyboard)
+        else:
+            text = session_expiring_soon_text(username, message)
+            for chat_id in config.allowed_chat_ids:
+                await bot.send_message(
+                    chat_id, text, reply_markup=force_reauth_keyboard(username)
+                )
 
     async def on_mfa_accepted(event: dict[str, Any]) -> None:
         waiter.resolve(success=True, error=None, username=event.get("username"))

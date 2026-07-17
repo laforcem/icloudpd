@@ -32,11 +32,37 @@ Requires icloudpd running with `--mfa-provider webui`. See
 `docs/superpowers/specs/2026-07-15-telegram-2fa-sidecar-design.md` in the
 repo root for the full design rationale.
 
+### Proactive refresh (`session_expiring_soon`)
+
+icloudpd also warns before a session actually expires (see
+`docs/superpowers/specs/2026-07-16-proactive-session-expiry-warning-design.md`).
+What the bot does with that warning depends on whether re-authenticating
+would need a human at a password prompt:
+
+- **A password is stored** (`parameter`/`keyring` in `password_providers`):
+  the bot sends a "Refresh session now" button. Tapping it calls
+  `POST /force-reauth`, which clears the session and lets icloudpd
+  re-authenticate silently, landing on the same "Start 2FA" flow above.
+- **`webui` is the only password provider** (nothing is ever persisted):
+  clearing the session would instead block indefinitely at a password
+  prompt with nobody watching. The bot detects this via icloudpd's
+  `/status.json` (`password_requires_manual_entry`) and sends a plain
+  text warning instead of a button that can't do anything — plus an
+  "Open WebUI" deep-link button if `ICLOUDPD_WEBUI_EXTERNAL_URL` is set
+  (see below).
+
 ## Running it
 
 Secrets are files, not environment variables — see `TELEGRAM_BOT_TOKEN_FILE`/
 `TELEGRAM_ALLOWED_CHAT_IDS_FILE` in `bot/config.py`; the raw
 `TELEGRAM_BOT_TOKEN`/`TELEGRAM_ALLOWED_CHAT_IDS` env vars are rejected outright.
+
+Optionally set `ICLOUDPD_WEBUI_EXTERNAL_URL` to a browser-reachable URL for
+icloudpd's WebUI (e.g. `http://vm101.lan:2011`) — distinct from
+`ICLOUDPD_BASE_URL`, which is the container-internal address this bot talks
+to over the Docker network. Not auto-detected (a container has no reliable
+way to know its own LAN-facing address); only used to add a deep-link
+button when a session refresh needs a human at the password prompt.
 
 ```bash
 mkdir -p secrets

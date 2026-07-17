@@ -28,3 +28,21 @@ class IcloudpdClient:
             f"{self._base_url}/code", data={"code": code}, timeout=self._timeout
         )
         return response.status_code == 200
+
+    def password_requires_manual_entry(self) -> bool:
+        """Whether POST /force-reauth would block on a human at a password prompt.
+
+        Best-effort: any failure here (icloudpd unreachable, unexpected
+        response shape) errs toward True, the same conservative default
+        icloudpd itself uses when it doesn't yet know — a wrongly "safe"
+        answer would offer a dead button, which is worse than an
+        unnecessary warning.
+        """
+        try:
+            response = requests.get(f"{self._base_url}/status.json", timeout=self._timeout)
+            if response.status_code != 200:
+                return True
+            body: dict[str, Any] = response.json()
+            return bool(body.get("password_requires_manual_entry", True))
+        except requests.RequestException:
+            return True

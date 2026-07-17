@@ -1,4 +1,6 @@
 import responses
+from requests.exceptions import ConnectionError as RequestsConnectionError
+
 from bot.icloudpd_client import IcloudpdClient
 
 
@@ -53,3 +55,49 @@ def test_force_reauth_unknown_username() -> None:
     client = IcloudpdClient("http://icloudpd:8080")
 
     assert client.force_reauth("unknown@icloud.com") is False
+
+
+@responses.activate
+def test_password_requires_manual_entry_true() -> None:
+    responses.add(
+        responses.GET,
+        "http://icloudpd:8080/status.json",
+        json={"password_requires_manual_entry": True},
+        status=200,
+    )
+    client = IcloudpdClient("http://icloudpd:8080")
+
+    assert client.password_requires_manual_entry() is True
+
+
+@responses.activate
+def test_password_requires_manual_entry_false() -> None:
+    responses.add(
+        responses.GET,
+        "http://icloudpd:8080/status.json",
+        json={"password_requires_manual_entry": False},
+        status=200,
+    )
+    client = IcloudpdClient("http://icloudpd:8080")
+
+    assert client.password_requires_manual_entry() is False
+
+
+@responses.activate
+def test_password_requires_manual_entry_defaults_true_on_bad_status() -> None:
+    responses.add(responses.GET, "http://icloudpd:8080/status.json", status=500)
+    client = IcloudpdClient("http://icloudpd:8080")
+
+    assert client.password_requires_manual_entry() is True
+
+
+@responses.activate
+def test_password_requires_manual_entry_defaults_true_on_connection_error() -> None:
+    responses.add(
+        responses.GET,
+        "http://icloudpd:8080/status.json",
+        body=RequestsConnectionError("connection refused"),
+    )
+    client = IcloudpdClient("http://icloudpd:8080")
+
+    assert client.password_requires_manual_entry() is True

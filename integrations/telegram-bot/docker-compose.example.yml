@@ -29,6 +29,10 @@ services:
       TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
       TELEGRAM_ALLOWED_CHAT_IDS_FILE: /run/secrets/telegram_allowed_chat_ids
       ICLOUDPD_BASE_URL: "http://icloudpd:2011"
+      # Optional: browser-reachable WebUI URL, for a deep-link button when a
+      # session refresh needs a human at the password prompt. Distinct from
+      # ICLOUDPD_BASE_URL above (that one's container-internal).
+      # ICLOUDPD_WEBUI_EXTERNAL_URL: "http://vm101.lan:2011"
     secrets:
       - telegram_bot_token
       - telegram_allowed_chat_ids

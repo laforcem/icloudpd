@@ -29,9 +29,12 @@ USERNAME = "jdoe@icloud.com"
 
 
 class FakeClient:
-    def __init__(self, force_reauth_result: bool = True) -> None:
+    def __init__(
+        self, force_reauth_result: bool = True, manual_entry_required: bool = False
+    ) -> None:
         self.force_reauth_result = force_reauth_result
         self.force_reauth_calls: list[str] = []
+        self.manual_entry_required = manual_entry_required
 
     def trigger_push(self) -> str | None:
         return USERNAME
@@ -42,6 +45,9 @@ class FakeClient:
     def force_reauth(self, username: str) -> bool:
         self.force_reauth_calls.append(username)
         return self.force_reauth_result
+
+    def password_requires_manual_entry(self) -> bool:
+        return self.manual_entry_required
 
 
 def make_chat(chat_id: int) -> Chat:
@@ -70,11 +76,17 @@ def force_reauth_update(update_id: int, chat_id: int, username: str) -> Update:
     return Update(update_id=update_id, callback_query=callback)
 
 
-def build_test_app(bot: MockedBot, client: FakeClient, allowed_chat_ids: frozenset[int]) -> tuple:
+def build_test_app(
+    bot: MockedBot,
+    client: FakeClient,
+    allowed_chat_ids: frozenset[int],
+    webui_external_url: str | None = None,
+) -> tuple:
     config = BotConfig(
         bot_token="42:TEST",
         allowed_chat_ids=allowed_chat_ids,
         icloudpd_base_url="http://icloudpd:2011",
+        webui_external_url=webui_external_url,
     )
     state = ChatState()
     waiter = MfaResultWaiter()
@@ -148,6 +160,65 @@ async def test_session_expiring_soon_push_then_refresh_tap_triggers_force_reauth
     assert client.force_reauth_calls == [USERNAME]
     confirmation = [req for req in bot.session.requests if isinstance(req, SendMessage)][-1]
     assert confirmation.text == f"Refreshing session for {USERNAME}. This may take a few seconds."
+
+
+@pytest.mark.asyncio
+async def test_session_expiring_soon_with_webui_only_password_sends_text_and_link() -> None:
+    bot = MockedBot()
+    client = FakeClient(manual_entry_required=True)
+    dispatcher, notify_app = build_test_app(
+        bot, client, frozenset({CHAT_ID_A}), webui_external_url="http://vm101.lan:2011"
+    )
+
+    async with TestClient(TestServer(notify_app)) as notify_client:
+        queue_ok(bot, SendMessage, result=make_reply_message())
+        response = await notify_client.post(
+            "/notify",
+            json={
+                "event_type": "session_expiring_soon",
+                "timestamp": "2026-07-16T00:00:00+00:00",
+                "username": USERNAME,
+                "message": "session expires in 3.0 day(s)",
+                "data": {"days_remaining": 3.0},
+            },
+        )
+        assert response.status == 204
+
+    warning = next(req for req in bot.session.requests if isinstance(req, SendMessage))
+    assert warning.text == (
+        f"⏳ {USERNAME}: session expires in 3.0 day(s)\n\n"
+        "Re-enter your password in the web app to avoid a stalled run."
+    )
+    assert warning.reply_markup.inline_keyboard[0][0].text == "Open WebUI"
+    assert warning.reply_markup.inline_keyboard[0][0].url == "http://vm101.lan:2011"
+
+
+@pytest.mark.asyncio
+async def test_session_expiring_soon_with_webui_only_password_and_no_external_url() -> None:
+    bot = MockedBot()
+    client = FakeClient(manual_entry_required=True)
+    dispatcher, notify_app = build_test_app(bot, client, frozenset({CHAT_ID_A}))
+
+    async with TestClient(TestServer(notify_app)) as notify_client:
+        queue_ok(bot, SendMessage, result=make_reply_message())
+        response = await notify_client.post(
+            "/notify",
+            json={
+                "event_type": "session_expiring_soon",
+                "timestamp": "2026-07-16T00:00:00+00:00",
+                "username": USERNAME,
+                "message": "session expires in 3.0 day(s)",
+                "data": {"days_remaining": 3.0},
+            },
+        )
+        assert response.status == 204
+
+    warning = next(req for req in bot.session.requests if isinstance(req, SendMessage))
+    assert warning.text == (
+        f"⏳ {USERNAME}: session expires in 3.0 day(s)\n\n"
+        "Re-enter your password in the web app to avoid a stalled run."
+    )
+    assert warning.reply_markup is None
 
 
 @pytest.mark.asyncio
