@@ -129,6 +129,7 @@ def test_check_and_notify_fires_when_inside_warning_window(tmp_path: object) -> 
     assert payload["event_type"] == "session_expiring_soon"
     assert payload["username"] == "jdoe@gmail.com"
     assert payload["data"]["days_remaining"] == pytest.approx(3.0, abs=0.1)
+    assert payload["message"] == "jdoe@gmail.com's iCloud session expires in 3.0 day(s)."
 
 
 @freeze_time("2026-01-01T00:00:00+00:00")

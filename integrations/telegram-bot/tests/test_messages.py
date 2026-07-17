@@ -18,8 +18,10 @@ from bot.messages import (
 def test_session_expiring_soon_text_includes_username_and_message() -> None:
     text = session_expiring_soon_text("jdoe@icloud.com", "session expires in 3.0 day(s)")
 
-    assert "jdoe@icloud.com" in text
-    assert "3.0 day(s)" in text
+    assert text == (
+        "⏳ jdoe@icloud.com: session expires in 3.0 day(s) "
+        "Re-authenticate before it lapses to avoid a stalled run."
+    )
 
 
 def test_force_reauth_keyboard_embeds_username_in_callback_data() -> None:
@@ -81,9 +83,10 @@ def test_code_failed_keyboard_has_retry_and_exit() -> None:
 def test_manual_password_entry_text_includes_username_and_message() -> None:
     text = manual_password_entry_text("jdoe@icloud.com", "session expires in 3.0 day(s)")
 
-    assert "jdoe@icloud.com" in text
-    assert "3.0 day(s)" in text
-    assert "Re-enter your password in the web app" in text
+    assert text == (
+        "⏳ jdoe@icloud.com: session expires in 3.0 day(s) "
+        "Re-enter your password in the web app to avoid a stalled run."
+    )
 
 
 def test_webui_link_keyboard_embeds_url() -> None:

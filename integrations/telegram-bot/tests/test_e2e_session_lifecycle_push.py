@@ -148,7 +148,10 @@ async def test_session_expiring_soon_push_then_refresh_tap_triggers_force_reauth
         assert response.status == 204
 
     warning = next(req for req in bot.session.requests if isinstance(req, SendMessage))
-    assert warning.text == f"⏳ {USERNAME}: session expires in 3.0 day(s)"
+    assert warning.text == (
+        f"⏳ {USERNAME}: session expires in 3.0 day(s) "
+        "Re-authenticate before it lapses to avoid a stalled run."
+    )
     assert warning.reply_markup.inline_keyboard[0][0].text == "Refresh session now"
     assert warning.reply_markup.inline_keyboard[0][0].callback_data == f"force_reauth:{USERNAME}"
 
@@ -186,7 +189,7 @@ async def test_session_expiring_soon_with_webui_only_password_sends_text_and_lin
 
     warning = next(req for req in bot.session.requests if isinstance(req, SendMessage))
     assert warning.text == (
-        f"⏳ {USERNAME}: session expires in 3.0 day(s)\n\n"
+        f"⏳ {USERNAME}: session expires in 3.0 day(s) "
         "Re-enter your password in the web app to avoid a stalled run."
     )
     assert warning.reply_markup.inline_keyboard[0][0].text == "Open WebUI"
@@ -215,7 +218,7 @@ async def test_session_expiring_soon_with_webui_only_password_and_no_external_ur
 
     warning = next(req for req in bot.session.requests if isinstance(req, SendMessage))
     assert warning.text == (
-        f"⏳ {USERNAME}: session expires in 3.0 day(s)\n\n"
+        f"⏳ {USERNAME}: session expires in 3.0 day(s) "
         "Re-enter your password in the web app to avoid a stalled run."
     )
     assert warning.reply_markup is None

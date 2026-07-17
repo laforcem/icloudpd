@@ -52,7 +52,7 @@ def exited_text() -> str:
 
 
 def session_expiring_soon_text(username: str, message: str) -> str:
-    return f"⏳ {username}: {message}"
+    return f"⏳ {username}: {message} Re-authenticate before it lapses to avoid a stalled run."
 
 
 def force_reauth_keyboard(username: str) -> InlineKeyboardMarkup:
@@ -76,10 +76,7 @@ def force_reauth_not_found_text() -> str:
 
 
 def manual_password_entry_text(username: str, message: str) -> str:
-    return (
-        f"⏳ {username}: {message}\n\n"
-        "Re-enter your password in the web app to avoid a stalled run."
-    )
+    return f"⏳ {username}: {message} Re-enter your password in the web app to avoid a stalled run."
 
 
 def webui_link_keyboard(url: str) -> InlineKeyboardMarkup:

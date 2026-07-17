@@ -131,10 +131,7 @@ def check_and_notify(
     event = notifications.build_event(
         event_type=_EVENT_TYPE,
         username=username,
-        message=(
-            f"{username}'s iCloud session expires in {max(days_remaining, 0):.1f} day(s). "
-            "Re-authenticate before it lapses to avoid a stalled run."
-        ),
+        message=f"{username}'s iCloud session expires in {max(days_remaining, 0):.1f} day(s).",
         data={
             "days_remaining": round(days_remaining, 1),
             "expires_at_utc": expires_at.isoformat(),
