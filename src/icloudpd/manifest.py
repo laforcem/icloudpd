@@ -39,9 +39,17 @@ class ManifestRow:
     last_seen_utc: str
 
 
+# How many record_seen writes may accumulate before they are committed.
+# Bounds data loss if the process is killed mid-run while avoiding a
+# synchronous commit (fsync) per asset, which dominates scan time on
+# large libraries.
+FLUSH_THRESHOLD = 100
+
+
 @dataclass
 class ManifestHandle:
     connection: sqlite3.Connection
+    pending_writes: int = 0
 
 
 def open(logger: logging.Logger, download_dir: str) -> ManifestHandle | None:
@@ -67,6 +75,11 @@ def open(logger: logging.Logger, download_dir: str) -> ManifestHandle | None:
 
 
 def close(handle: ManifestHandle) -> None:
+    try:
+        handle.connection.commit()
+        handle.pending_writes = 0
+    except sqlite3.Error:
+        pass
     handle.connection.close()
 
 
@@ -86,6 +99,9 @@ def record_seen(
     Upserts on (record_name, local_path): inserts a fresh row on first
     sight, or refreshes last_seen_utc (and size_bytes) if the row already
     exists. Never raises - failures are logged and swallowed.
+
+    Writes are batched: they become durable only after FLUSH_THRESHOLD
+    accumulated writes or on close(), never per call.
     """
     now = _now_utc_iso()
     try:
@@ -101,7 +117,10 @@ def record_seen(
             """,
             (record_name, local_path, size_bytes, now, now),
         )
-        handle.connection.commit()
+        handle.pending_writes += 1
+        if handle.pending_writes >= FLUSH_THRESHOLD:
+            handle.connection.commit()
+            handle.pending_writes = 0
     except sqlite3.Error as ex:
         logger.warning(
             "Could not record manifest entry for %s (%s): %s", record_name, local_path, ex

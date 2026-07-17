@@ -143,6 +143,58 @@ class AllRecordsAndPruneTestCase(TestCase):
         manifest.prune(self.logger, self.handle, "REC1", "/data/a.jpg")
 
 
+class BatchedCommitTestCase(TestCase):
+    """record_seen must not commit (fsync) per call: writes are batched and
+    become durable on close() or after every FLUSH_THRESHOLD writes.
+    Durability is observed through a second, independent connection to the
+    same database file, which can only see committed data."""
+
+    @pytest.fixture(autouse=True)
+    def inject_fixtures(self, tmp_path: Path) -> Iterator[None]:
+        self.tmp_path = tmp_path
+        self.logger = logging.getLogger("test_manifest")
+        handle = manifest.open(self.logger, str(self.tmp_path))
+        assert handle is not None
+        self.handle = handle
+        self.db_path = os.path.join(str(self.tmp_path), ".icloudpd", "state.db")
+        yield
+        manifest.close(self.handle)
+
+    def _committed_row_count(self) -> int:
+        import sqlite3
+
+        observer = sqlite3.connect(self.db_path)
+        try:
+            cursor = observer.execute("SELECT COUNT(*) FROM downloaded_assets")
+            return int(cursor.fetchone()[0])
+        finally:
+            observer.close()
+
+    def test_record_seen_does_not_commit_per_call(self) -> None:
+        manifest.record_seen(self.logger, self.handle, "REC1", "/data/IMG_1.JPG", 12345)
+        self.assertEqual(self._committed_row_count(), 0)
+
+    def test_close_commits_pending_writes(self) -> None:
+        manifest.record_seen(self.logger, self.handle, "REC1", "/data/IMG_1.JPG", 12345)
+        manifest.close(self.handle)
+        self.assertEqual(self._committed_row_count(), 1)
+
+    def test_record_seen_auto_flushes_at_threshold(self) -> None:
+        for i in range(manifest.FLUSH_THRESHOLD):
+            manifest.record_seen(self.logger, self.handle, f"REC{i}", f"/data/IMG_{i}.JPG", i)
+        self.assertEqual(self._committed_row_count(), manifest.FLUSH_THRESHOLD)
+
+    def test_writes_below_threshold_stay_pending_until_close(self) -> None:
+        for i in range(manifest.FLUSH_THRESHOLD - 1):
+            manifest.record_seen(self.logger, self.handle, f"REC{i}", f"/data/IMG_{i}.JPG", i)
+        self.assertEqual(self._committed_row_count(), 0)
+
+    def test_close_is_safe_after_close(self) -> None:
+        manifest.close(self.handle)
+        # Must not raise
+        manifest.close(self.handle)
+
+
 class PerDirectoryIsolationTestCase(TestCase):
     """Two download directories must get independent manifest databases,
     with no cross-directory visibility of rows - matching icloudpd's
