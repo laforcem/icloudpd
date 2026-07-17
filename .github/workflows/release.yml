@@ -21,12 +21,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Pre-release tags (e.g. v1.1.0-rc1) must not move `latest` — only a
+      # final vX.Y.Z tag (no `-` suffix) should do that.
+      - name: Determine image tags
+        id: tags
+        run: |
+          REF="${{ github.ref_name }}"
+          TAGS="ghcr.io/laforcem/icloudpd:${REF}"
+          if [[ "$REF" != *-* ]]; then
+            TAGS="${TAGS}
+          ghcr.io/laforcem/icloudpd:latest"
+          fi
+          {
+            echo 'tags<<EOF'
+            echo "$TAGS"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
           push: true
-          tags: |
-            ghcr.io/laforcem/icloudpd:${{ github.ref_name }}
-            ghcr.io/laforcem/icloudpd:latest
+          tags: ${{ steps.tags.outputs.tags }}
