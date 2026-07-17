@@ -15,12 +15,10 @@ services:
     volumes:
       - ./data:/data
       - ./config:/home/icloudpd/.pyicloud
-    environment:
-      TELEGRAM_BOT_NOTIFY_URL: "http://telegram-bot:8090/notify"
     networks:
       - icloudpd-net
 
-  telegram-bot:
+  icloudpd-telegram-bot:
     image: ghcr.io/laforcem/icloudpd-telegram-bot:latest
     environment:
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"

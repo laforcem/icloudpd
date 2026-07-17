@@ -11,7 +11,7 @@ import sys
 
 import requests
 
-NOTIFY_URL = os.environ.get("TELEGRAM_BOT_NOTIFY_URL", "http://telegram-bot:8090/notify")
+NOTIFY_URL = os.environ.get("TELEGRAM_BOT_NOTIFY_URL", "http://icloudpd-telegram-bot:8090/notify")
 
 
 def main() -> int:
