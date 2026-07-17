@@ -3,6 +3,8 @@ secrets:
     file: ./secrets/telegram_bot_token.txt
   telegram_allowed_chat_ids:
     file: ./secrets/telegram_allowed_chat_ids.txt
+  icloudpd_webui_external_url:
+    file: ./secrets/icloudpd_webui_external_url.txt
 
 services:
   icloudpd:
@@ -32,10 +34,11 @@ services:
       # Optional: browser-reachable WebUI URL, for a deep-link button when a
       # session refresh needs a human at the password prompt. Distinct from
       # ICLOUDPD_BASE_URL above (that one's container-internal).
-      # ICLOUDPD_WEBUI_EXTERNAL_URL: "http://vm101.lan:2011"
+      # ICLOUDPD_WEBUI_EXTERNAL_URL_FILE: /run/secrets/icloudpd_webui_external_url
     secrets:
       - telegram_bot_token
       - telegram_allowed_chat_ids
+      # - icloudpd_webui_external_url
     networks:
       - icloudpd-net
 

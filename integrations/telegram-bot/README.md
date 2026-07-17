@@ -48,21 +48,24 @@ would need a human at a password prompt:
   prompt with nobody watching. The bot detects this via icloudpd's
   `/status.json` (`password_requires_manual_entry`) and sends a plain
   text warning instead of a button that can't do anything — plus an
-  "Open WebUI" deep-link button if `ICLOUDPD_WEBUI_EXTERNAL_URL` is set
+  "Open WebUI" deep-link button if `ICLOUDPD_WEBUI_EXTERNAL_URL_FILE` is set
   (see below).
 
 ## Running it
 
 Secrets are files, not environment variables — see `TELEGRAM_BOT_TOKEN_FILE`/
-`TELEGRAM_ALLOWED_CHAT_IDS_FILE` in `bot/config.py`; the raw
-`TELEGRAM_BOT_TOKEN`/`TELEGRAM_ALLOWED_CHAT_IDS` env vars are rejected outright.
+`TELEGRAM_ALLOWED_CHAT_IDS_FILE`/`ICLOUDPD_WEBUI_EXTERNAL_URL_FILE` in
+`bot/config.py`; the raw `TELEGRAM_BOT_TOKEN`/`TELEGRAM_ALLOWED_CHAT_IDS`/
+`ICLOUDPD_WEBUI_EXTERNAL_URL` env vars are rejected outright.
 
-Optionally set `ICLOUDPD_WEBUI_EXTERNAL_URL` to a browser-reachable URL for
-icloudpd's WebUI (e.g. `http://vm101.lan:2011`) — distinct from
-`ICLOUDPD_BASE_URL`, which is the container-internal address this bot talks
-to over the Docker network. Not auto-detected (a container has no reliable
-way to know its own LAN-facing address); only used to add a deep-link
-button when a session refresh needs a human at the password prompt.
+Optionally set `ICLOUDPD_WEBUI_EXTERNAL_URL_FILE` to a file containing a
+browser-reachable URL for icloudpd's WebUI (e.g. `http://vm101.lan:2011`) —
+distinct from `ICLOUDPD_BASE_URL`, which is the container-internal address
+this bot talks to over the Docker network. Not auto-detected (a container
+has no reliable way to know its own LAN-facing address); only used to add a
+deep-link button when a session refresh needs a human at the password
+prompt. Treated as a secret since it can point at an otherwise-unauthenticated
+admin panel.
 
 ```bash
 mkdir -p secrets

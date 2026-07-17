@@ -20,7 +20,8 @@ class BotConfig:
     # no reliable way to know its own LAN-facing address (NAT, port mapping,
     # which interface). Optional: only used to add a deep-link button when a
     # session refresh needs a human at the password prompt; omitted entirely
-    # if unset.
+    # if unset. Treated as a secret (ICLOUDPD_WEBUI_EXTERNAL_URL_FILE) since a
+    # real domain here can expose an otherwise-unauthenticated admin panel.
     webui_external_url: str | None = None
 
 
@@ -41,6 +42,23 @@ def _read_secret_file(file_env_var: str, raw_env_var: str) -> str:
         raise BotConfigError(f"{file_env_var} {path!r} could not be read: {e}") from e
 
 
+def _read_optional_secret_file(file_env_var: str, raw_env_var: str) -> str | None:
+    if raw_env_var in os.environ:
+        raise BotConfigError(
+            f"{raw_env_var} is not supported — secrets are never passed as raw "
+            f"environment variables. Set {file_env_var} to a path containing the "
+            "value instead."
+        )
+    path = os.environ.get(file_env_var)
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError as e:
+        raise BotConfigError(f"{file_env_var} {path!r} could not be read: {e}") from e
+
+
 def load_config() -> BotConfig:
     bot_token = _read_secret_file("TELEGRAM_BOT_TOKEN_FILE", "TELEGRAM_BOT_TOKEN")
     raw_chat_ids = _read_secret_file(
@@ -51,7 +69,9 @@ def load_config() -> BotConfig:
     )
     icloudpd_base_url = os.environ.get("ICLOUDPD_BASE_URL", "http://icloudpd:2011")
     notify_listener_port = int(os.environ.get("NOTIFY_LISTENER_PORT", "8090"))
-    webui_external_url = os.environ.get("ICLOUDPD_WEBUI_EXTERNAL_URL") or None
+    webui_external_url = _read_optional_secret_file(
+        "ICLOUDPD_WEBUI_EXTERNAL_URL_FILE", "ICLOUDPD_WEBUI_EXTERNAL_URL"
+    )
     return BotConfig(
         bot_token=bot_token,
         allowed_chat_ids=allowed_chat_ids,

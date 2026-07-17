@@ -42,6 +42,7 @@ def test_load_config_defaults_base_url_and_port(
     monkeypatch.delenv("ICLOUDPD_BASE_URL", raising=False)
     monkeypatch.delenv("NOTIFY_LISTENER_PORT", raising=False)
     monkeypatch.delenv("ICLOUDPD_WEBUI_EXTERNAL_URL", raising=False)
+    monkeypatch.delenv("ICLOUDPD_WEBUI_EXTERNAL_URL_FILE", raising=False)
 
     config = load_config()
 
@@ -50,7 +51,29 @@ def test_load_config_defaults_base_url_and_port(
     assert config.webui_external_url is None
 
 
-def test_load_config_reads_webui_external_url_when_set(
+def test_load_config_reads_webui_external_url_file_when_set(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token_path = tmp_path / "token.txt"
+    token_path.write_text("123:abc")
+    chat_ids_path = tmp_path / "chat_ids.txt"
+    chat_ids_path.write_text("488165044")
+    webui_url_path = tmp_path / "webui_url.txt"
+    webui_url_path.write_text("http://vm101.lan:2011\n")
+
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_ALLOWED_CHAT_IDS", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN_FILE", str(token_path))
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS_FILE", str(chat_ids_path))
+    monkeypatch.delenv("ICLOUDPD_WEBUI_EXTERNAL_URL", raising=False)
+    monkeypatch.setenv("ICLOUDPD_WEBUI_EXTERNAL_URL_FILE", str(webui_url_path))
+
+    config = load_config()
+
+    assert config.webui_external_url == "http://vm101.lan:2011"
+
+
+def test_load_config_rejects_raw_webui_external_url_env_var(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     token_path = tmp_path / "token.txt"
@@ -59,14 +82,14 @@ def test_load_config_reads_webui_external_url_when_set(
     chat_ids_path.write_text("488165044")
 
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    monkeypatch.delenv("TELEGRAM_ALLOWED_CHAT_IDS", raising=False)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN_FILE", str(token_path))
+    monkeypatch.delenv("TELEGRAM_ALLOWED_CHAT_IDS", raising=False)
     monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS_FILE", str(chat_ids_path))
+    monkeypatch.delenv("ICLOUDPD_WEBUI_EXTERNAL_URL_FILE", raising=False)
     monkeypatch.setenv("ICLOUDPD_WEBUI_EXTERNAL_URL", "http://vm101.lan:2011")
 
-    config = load_config()
-
-    assert config.webui_external_url == "http://vm101.lan:2011"
+    with pytest.raises(BotConfigError, match="ICLOUDPD_WEBUI_EXTERNAL_URL"):
+        load_config()
 
 
 def test_load_config_requires_bot_token_file(
