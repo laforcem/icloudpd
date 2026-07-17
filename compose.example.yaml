@@ -1,6 +1,6 @@
 services:
   icloudpd:
-    image: icloudpd/icloudpd:latest
+    image: laforcem/icloudpd:latest
     configs:
       - source: icloudpd_config
         target: /etc/icloudpd/config.yaml
