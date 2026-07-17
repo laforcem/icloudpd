@@ -4,6 +4,10 @@ import os
 from dataclasses import dataclass
 
 
+class BotConfigError(ValueError):
+    """Raised for a misconfigured environment (fails loudly at startup)."""
+
+
 @dataclass(frozen=True)
 class BotConfig:
     bot_token: str
@@ -12,9 +16,28 @@ class BotConfig:
     notify_listener_port: int = 8090
 
 
+def _read_secret_file(file_env_var: str, raw_env_var: str) -> str:
+    if raw_env_var in os.environ:
+        raise BotConfigError(
+            f"{raw_env_var} is not supported — secrets are never passed as raw "
+            f"environment variables. Set {file_env_var} to a path containing the "
+            "value instead."
+        )
+    path = os.environ.get(file_env_var)
+    if not path:
+        raise BotConfigError(f"{file_env_var} is required (path to a file containing the value).")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError as e:
+        raise BotConfigError(f"{file_env_var} {path!r} could not be read: {e}") from e
+
+
 def load_config() -> BotConfig:
-    bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
-    raw_chat_ids = os.environ["TELEGRAM_ALLOWED_CHAT_IDS"]
+    bot_token = _read_secret_file("TELEGRAM_BOT_TOKEN_FILE", "TELEGRAM_BOT_TOKEN")
+    raw_chat_ids = _read_secret_file(
+        "TELEGRAM_ALLOWED_CHAT_IDS_FILE", "TELEGRAM_ALLOWED_CHAT_IDS"
+    )
     allowed_chat_ids = frozenset(
         int(chat_id.strip()) for chat_id in raw_chat_ids.split(",") if chat_id.strip()
     )

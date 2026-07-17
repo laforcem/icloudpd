@@ -34,8 +34,14 @@ repo root for the full design rationale.
 
 ## Running it
 
+Secrets are files, not environment variables — see `TELEGRAM_BOT_TOKEN_FILE`/
+`TELEGRAM_ALLOWED_CHAT_IDS_FILE` in `bot/config.py`; the raw
+`TELEGRAM_BOT_TOKEN`/`TELEGRAM_ALLOWED_CHAT_IDS` env vars are rejected outright.
+
 ```bash
-cp .env.example .env  # fill in TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS
+mkdir -p secrets
+echo -n "<your bot token>" > secrets/telegram_bot_token.txt
+echo -n "<comma-separated chat IDs>" > secrets/telegram_allowed_chat_ids.txt
 docker compose -f docker-compose.example.yml up
 ```
 
