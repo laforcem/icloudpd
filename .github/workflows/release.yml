@@ -6,7 +6,25 @@ on:
       - 'v*'
 
 jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      is_final: ${{ steps.check.outputs.is_final }}
+    steps:
+      # Pre-release tags (e.g. v1.1.0-rc1) still get an image build, just
+      # never move `latest` — only a final vX.Y.Z tag (no `-` suffix) does.
+      - name: Determine whether this is a final release
+        id: check
+        run: |
+          REF="${{ github.ref_name }}"
+          if [[ "$REF" != *-* ]]; then
+            echo "is_final=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_final=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build-and-push:
+    needs: prepare
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -21,14 +39,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pre-release tags (e.g. v1.1.0-rc1) must not move `latest` — only a
-      # final vX.Y.Z tag (no `-` suffix) should do that.
       - name: Determine image tags
         id: tags
         run: |
-          REF="${{ github.ref_name }}"
-          TAGS="ghcr.io/laforcem/icloudpd:${REF}"
-          if [[ "$REF" != *-* ]]; then
+          TAGS="ghcr.io/laforcem/icloudpd:${{ github.ref_name }}"
+          if [[ "${{ needs.prepare.outputs.is_final }}" == "true" ]]; then
             TAGS="${TAGS}
           ghcr.io/laforcem/icloudpd:latest"
           fi
@@ -42,6 +57,44 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+
+  build-and-push-telegram-bot:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: tags
+        run: |
+          TAGS="ghcr.io/laforcem/icloudpd-telegram-bot:${{ github.ref_name }}"
+          if [[ "${{ needs.prepare.outputs.is_final }}" == "true" ]]; then
+            TAGS="${TAGS}
+          ghcr.io/laforcem/icloudpd-telegram-bot:latest"
+          fi
+          {
+            echo 'tags<<EOF'
+            echo "$TAGS"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: integrations/telegram-bot
           platforms: linux/amd64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
