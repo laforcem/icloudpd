@@ -6,9 +6,18 @@ The file has three top-level sections:
     unless that entry overrides a given key.
   - `users`: a list of per-account blocks (maps onto UserConfig).
 
-Secrets are never inline: any `*_file` key names a path to a file
-containing the value, read once by the caller. A literal `password:` key
-is rejected outright — `password_file` is the only supported form.
+Secrets and other values callers may not want committed to a config file
+in plaintext (e.g. an Apple ID's email address) are never required
+inline: a `*_file` key names a path to a file containing the value
+instead. A literal `password:` key is rejected outright — `password_file`
+is the only supported form. `username`/`username_file` are more lenient:
+either is accepted, since a plain email address isn't dangerous the way a
+raw password is — `username_file` exists for callers who don't want it in
+a file they might commit anyway. Note the two `_file` fields resolve at
+different times: `username_file` is read once, right here at config-load
+time, since the username is needed immediately as an identity key;
+`password_file` is read fresh on every use (see `base.py`), since a
+password may rotate underneath a long-running watch loop.
 """
 
 from dataclasses import dataclass
@@ -33,10 +42,14 @@ _LOWERCASE_FIELDS = {
 }
 
 # Keys allowed under `app` (GlobalConfig fields), and under `all_users`/each
-# `users[]` entry (UserConfig fields, plus the two fields that only exist in
+# `users[]` entry (UserConfig fields, plus the fields that only exist in
 # the config file's user shape).
 _ALLOWED_APP_KEYS = set(GLOBAL_OPTION_DEFAULTS.keys())
-_ALLOWED_USER_KEYS = set(USER_OPTION_DEFAULTS.keys()) | {"username", "password_file"}
+_ALLOWED_USER_KEYS = set(USER_OPTION_DEFAULTS.keys()) | {
+    "username",
+    "username_file",
+    "password_file",
+}
 
 # Fields that are legitimately typed as `bool` on GlobalConfig/UserConfig
 # (see src/icloudpd/config.py). Any *other* field that comes back from YAML
@@ -104,8 +117,24 @@ def _validate_user_entry(entry: Dict[str, Any], index: int) -> None:
             "use `password_file` (a path to a file containing the password) instead. "
             "Secrets are never written directly into this file."
         )
-    if "username" not in entry:
-        raise ConfigFileError(f"users[{index}]: `username` is required for every account")
+    has_username = "username" in entry
+    has_username_file = "username_file" in entry
+    if has_username and has_username_file:
+        raise ConfigFileError(
+            f"users[{index}]: `username` and `username_file` are mutually exclusive — pick one."
+        )
+    if not has_username and not has_username_file:
+        raise ConfigFileError(
+            f"users[{index}]: `username` (or `username_file`) is required for every account"
+        )
+
+
+def _read_username_file(path: str, index: int) -> str:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError as e:
+        raise ConfigFileError(f"users[{index}]: username_file {path!r} could not be read: {e}") from e
 
 
 def _validate_known_keys(
@@ -161,6 +190,10 @@ def load_config_file(path: str) -> RawConfigFile:
         coerced_entry = _coerce_scalar_fields(entry)
         _validate_known_keys(f"users[{index}]", coerced_entry, _ALLOWED_USER_KEYS)
         _validate_bool_mistyping(f"users[{index}]", coerced_entry, _USER_BOOL_FIELDS)
+        if "username_file" in coerced_entry:
+            coerced_entry["username"] = _read_username_file(
+                coerced_entry.pop("username_file"), index
+            )
         users.append(coerced_entry)
 
     return RawConfigFile(app=app, all_users=all_users, users=users)

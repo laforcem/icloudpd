@@ -68,6 +68,52 @@ users:
         load_config_file(path)
 
 
+def test_load_config_file_reads_username_from_file(tmp_path: pathlib.Path) -> None:
+    username_path = tmp_path / "apple_id.txt"
+    username_path.write_text("you@icloud.com\n")
+    path = _write(
+        tmp_path,
+        f"""
+users:
+  - username_file: {username_path}
+    directory: /data
+""",
+    )
+    raw = load_config_file(path)
+    assert raw.users[0]["username"] == "you@icloud.com"
+    assert "username_file" not in raw.users[0]
+
+
+def test_load_config_file_rejects_username_and_username_file_together(
+    tmp_path: pathlib.Path,
+) -> None:
+    username_path = tmp_path / "apple_id.txt"
+    username_path.write_text("you@icloud.com\n")
+    path = _write(
+        tmp_path,
+        f"""
+users:
+  - username: someone@icloud.com
+    username_file: {username_path}
+""",
+    )
+    with pytest.raises(ConfigFileError, match="mutually exclusive"):
+        load_config_file(path)
+
+
+def test_load_config_file_reports_missing_username_file(tmp_path: pathlib.Path) -> None:
+    path = _write(
+        tmp_path,
+        f"""
+users:
+  - username_file: {tmp_path / "missing.txt"}
+    directory: /data
+""",
+    )
+    with pytest.raises(ConfigFileError, match="username_file"):
+        load_config_file(path)
+
+
 def test_load_config_file_rejects_unknown_top_level_section(tmp_path: pathlib.Path) -> None:
     path = _write(
         tmp_path,

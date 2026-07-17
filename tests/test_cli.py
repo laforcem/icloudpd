@@ -631,6 +631,17 @@ def test_config_file_and_cli_username_are_mutually_exclusive(tmp_path: pathlib.P
         parse(["--config", config_path, "-u", "someone@icloud.com", "--directory", "/x"])
 
 
+def test_username_file_resolves_through_parse(tmp_path: pathlib.Path) -> None:
+    username_path = tmp_path / "apple_id.txt"
+    username_path.write_text("you@icloud.com\n")
+    config_path = _write_config(
+        tmp_path,
+        {"users": [{"username_file": str(username_path), "directory": "/data"}]},
+    )
+    _global_config, user_configs = parse(["--config", config_path])
+    assert user_configs[0].username == "you@icloud.com"
+
+
 def test_default_config_path_used_when_no_flag_given(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
