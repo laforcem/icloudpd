@@ -10,13 +10,13 @@ A command-line tool to download media from iCloud Photos. This is a Docker-first
 For the full list of config options:
 
 ```sh
-docker run -it --rm laforcem/icloudpd:latest --help
+docker run -it --rm ghcr.io/laforcem/icloudpd:latest --help
 ```
 
 ### Normal Docker run
 
 ```sh
-docker run -it --rm --name icloudpd -v $(pwd)/Photos:/data -e TZ=America/Los_Angeles laforcem/icloudpd:latest --directory /data --username my@email.address --watch-with-interval 3600
+docker run -it --rm --name icloudpd -v $(pwd)/Photos:/data -e TZ=America/Los_Angeles ghcr.io/laforcem/icloudpd:latest --directory /data --username my@email.address --watch-with-interval 3600
 ```
 
 ### Docker Compose

@@ -1,6 +1,6 @@
 services:
   icloudpd:
-    image: laforcem/icloudpd:latest
+    image: ghcr.io/laforcem/icloudpd:latest
     configs:
       - source: icloudpd_config
         target: /etc/icloudpd/config.yaml
@@ -12,7 +12,7 @@ services:
 
 configs:
   icloudpd_config:
-    file: ./icloudpd-config.example.yaml
+    file: ./config.example.yaml
 
 secrets:
   icloud_password_you:
