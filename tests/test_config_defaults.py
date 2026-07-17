@@ -20,4 +20,7 @@ def test_user_option_defaults_cover_every_configurable_user_field() -> None:
         for f in dataclasses.fields(UserConfig)
         if f.name not in ("username", "password", "password_file")
     }
-    assert set(USER_OPTION_DEFAULTS.keys()) == configurable_fields
+    # notification_forwarder resolves into notification_script before UserConfig
+    # is ever constructed (see cli.py's _resolve_notification_script) — it's a
+    # config-file/CLI-level convenience flag, not its own UserConfig field.
+    assert set(USER_OPTION_DEFAULTS.keys()) - {"notification_forwarder"} == configurable_fields
