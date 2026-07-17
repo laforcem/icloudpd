@@ -4,8 +4,11 @@ from unittest import mock
 
 from flask.testing import FlaskClient
 
-from icloudpd.config import UserConfig
+from icloudpd.config import GlobalConfig, UserConfig
+from icloudpd.log_level import LogLevel
 from icloudpd.logger import setup_logger
+from icloudpd.mfa_provider import MFAProvider
+from icloudpd.password_provider import PasswordProvider
 from icloudpd.server import build_app, serve_app
 from icloudpd.status import Status, StatusExchange
 from pyicloud_ipd.file_match import FileMatchPolicy
@@ -17,6 +20,23 @@ from pyicloud_ipd.version_size import AssetVersionSize, LivePhotoVersionSize
 def make_client(status_exchange: StatusExchange) -> FlaskClient:
     app = build_app(setup_logger(), status_exchange)
     return app.test_client()
+
+
+def make_global_config(password_providers: list[PasswordProvider]) -> GlobalConfig:
+    return GlobalConfig(
+        help=False,
+        version=False,
+        use_os_locale=False,
+        only_print_filenames=False,
+        log_level=LogLevel.DEBUG,
+        no_progress_bar=False,
+        threads_num=1,
+        domain="com",
+        watch_with_interval=None,
+        password_providers=password_providers,
+        mfa_provider=MFAProvider.WEBUI,
+        webui_port=2011,
+    )
 
 
 def test_status_idle_renders_no_input() -> None:
@@ -57,6 +77,7 @@ def test_status_json_reports_current_state() -> None:
     status_exchange = StatusExchange()
     status_exchange.replace_status(Status.IDLE, Status.AWAITING_MFA_TRIGGER)
     status_exchange.set_current_user("jdoe@icloud.com")
+    status_exchange.set_global_config(make_global_config([PasswordProvider.PARAMETER]))
     client = make_client(status_exchange)
 
     response = client.get("/status.json")
@@ -66,7 +87,42 @@ def test_status_json_reports_current_state() -> None:
         "status": "AWAITING_MFA_TRIGGER",
         "error": None,
         "current_user": "jdoe@icloud.com",
+        "password_requires_manual_entry": False,
     }
+
+
+def test_status_json_flags_manual_entry_when_webui_is_a_password_provider() -> None:
+    status_exchange = StatusExchange()
+    status_exchange.set_global_config(make_global_config([PasswordProvider.WEBUI]))
+    client = make_client(status_exchange)
+
+    response = client.get("/status.json")
+
+    assert response.json is not None
+    assert response.json["password_requires_manual_entry"] is True
+
+
+def test_status_json_flags_manual_entry_when_webui_is_a_fallback_provider() -> None:
+    status_exchange = StatusExchange()
+    status_exchange.set_global_config(
+        make_global_config([PasswordProvider.PARAMETER, PasswordProvider.WEBUI])
+    )
+    client = make_client(status_exchange)
+
+    response = client.get("/status.json")
+
+    assert response.json is not None
+    assert response.json["password_requires_manual_entry"] is True
+
+
+def test_status_json_defaults_to_manual_entry_when_global_config_unset() -> None:
+    status_exchange = StatusExchange()
+    client = make_client(status_exchange)
+
+    response = client.get("/status.json")
+
+    assert response.json is not None
+    assert response.json["password_requires_manual_entry"] is True
 
 
 def test_trigger_push_moves_awaiting_trigger_to_awaiting_code() -> None:

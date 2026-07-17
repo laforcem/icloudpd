@@ -5,8 +5,29 @@ from logging import Logger
 import waitress
 from flask import Flask, Response, jsonify, make_response, render_template, request
 
+from icloudpd.password_provider import PasswordProvider
 from icloudpd.status import Status, StatusExchange
 from pyicloud_ipd.base import session_file_path
+
+
+def _password_requires_manual_entry(_status_exchange: StatusExchange) -> bool:
+    """Whether a session refresh (POST /force-reauth) could block on a human.
+
+    `password_provider()` (see base.py) tries each configured provider in
+    order and blocks indefinitely on the first one it reaches that has no
+    non-interactive answer — `webui`/`console` never return without a human
+    present. Whether an earlier `parameter`/`keyring` entry would actually
+    succeed first is runtime-dependent (is a password actually stored right
+    now?), which this can't know in advance. So this errs conservative:
+    `webui` anywhere in the list means a refresh *might* block, even if a
+    well-configured fallback would usually pre-empt it — the failure mode of
+    a wrongly "safe" answer (a dead button) is worse than an unnecessary
+    warning.
+    """
+    global_config = _status_exchange.get_global_config()
+    if global_config is None:
+        return True
+    return PasswordProvider.WEBUI in global_config.password_providers
 
 
 def build_app(logger: Logger, _status_exchange: StatusExchange) -> Flask:
@@ -56,6 +77,9 @@ def build_app(logger: Logger, _status_exchange: StatusExchange) -> Flask:
                 "status": str(_status_exchange.get_status()),
                 "error": _status_exchange.get_error(),
                 "current_user": _status_exchange.get_current_user(),
+                "password_requires_manual_entry": _password_requires_manual_entry(
+                    _status_exchange
+                ),
             }
         )
 
