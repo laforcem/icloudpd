@@ -15,7 +15,11 @@ from foundation.core import chain_from_iterable, compose, map_, partial_1_1, ski
 from foundation.string_utils import lower
 from icloudpd.base import ensure_tzinfo, run_with_configs
 from icloudpd.config import GlobalConfig, UserConfig
-from icloudpd.config_defaults import GLOBAL_OPTION_DEFAULTS, USER_OPTION_DEFAULTS
+from icloudpd.config_defaults import (
+    BUILTIN_NOTIFICATION_FORWARDER_PATH,
+    GLOBAL_OPTION_DEFAULTS,
+    USER_OPTION_DEFAULTS,
+)
 from icloudpd.config_file import (
     ConfigFileError,
     dump_resolved_config,
@@ -167,6 +171,14 @@ def add_options_for_user(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
         help="Path to external script to run when a notification event occurs "
         "(e.g. two-step authentication expiring). Invoked with a JSON payload "
         "describing the event on stdin.",
+        default=None,
+    )
+    cloned.add_argument(
+        "--notification-forwarder",
+        help="Use the generic notification forwarder baked into the icloudpd "
+        f"image ({BUILTIN_NOTIFICATION_FORWARDER_PATH}) instead of spelling out "
+        "--notification-script. Mutually exclusive with --notification-script.",
+        action="store_true",
         default=None,
     )
     cloned.add_argument(
@@ -464,6 +476,20 @@ def format_help() -> str:
     return "\n".join(all_help)
 
 
+def _resolve_notification_script(user_ns: argparse.Namespace, get: Callable[[str], Any]) -> Any:
+    notification_script = get("notification_script")
+    notification_forwarder = get("notification_forwarder")
+    if notification_forwarder and notification_script:
+        raise ConfigFileError(
+            f"user {getattr(user_ns, 'username', None)!r}: --notification-forwarder/"
+            "notification_forwarder and --notification-script/notification_script "
+            "are mutually exclusive — pick one."
+        )
+    if notification_forwarder:
+        return pathlib.Path(BUILTIN_NOTIFICATION_FORWARDER_PATH)
+    return notification_script
+
+
 def map_to_config(user_ns: argparse.Namespace) -> UserConfig:
     def get(field: str) -> Any:
         value = getattr(user_ns, field, None)
@@ -491,7 +517,7 @@ def map_to_config(user_ns: argparse.Namespace) -> UserConfig:
         auto_delete=get("auto_delete"),
         folder_structure=get("folder_structure"),
         set_exif_datetime=get("set_exif_datetime"),
-        notification_script=get("notification_script"),
+        notification_script=_resolve_notification_script(user_ns, get),
         session_expiry_warning_days=get("session_expiry_warning_days"),
         session_expiry_notification_interval_hours=get(
             "session_expiry_notification_interval_hours"

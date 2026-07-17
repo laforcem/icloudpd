@@ -58,6 +58,7 @@ _USER_BOOL_FIELDS = {
     "dry_run",
     "keep_unicode_in_filenames",
     "skip_photos",
+    "notification_forwarder",
 }
 
 

@@ -662,6 +662,64 @@ def test_password_file_field_is_populated_from_config(tmp_path: pathlib.Path) ->
     assert user_configs[0].password_file == str(secret_path)
 
 
+def test_notification_forwarder_resolves_to_builtin_path(tmp_path: pathlib.Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "users": [
+                {
+                    "username": "you@icloud.com",
+                    "directory": "/data",
+                    "notification_forwarder": True,
+                }
+            ]
+        },
+    )
+    _global_config, user_configs = parse(["--config", config_path])
+    assert str(user_configs[0].notification_script) == "/usr/local/bin/notification_script.py"
+
+
+def test_notification_forwarder_and_notification_script_are_mutually_exclusive(
+    tmp_path: pathlib.Path,
+) -> None:
+    from icloudpd.config_file import ConfigFileError
+
+    config_path = _write_config(
+        tmp_path,
+        {
+            "users": [
+                {
+                    "username": "you@icloud.com",
+                    "directory": "/data",
+                    "notification_forwarder": True,
+                    "notification_script": "/custom/script.py",
+                }
+            ]
+        },
+    )
+    with pytest.raises(ConfigFileError, match="mutually exclusive"):
+        parse(["--config", config_path])
+
+
+def test_notification_script_unaffected_when_forwarder_not_set(
+    tmp_path: pathlib.Path,
+) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "users": [
+                {
+                    "username": "you@icloud.com",
+                    "directory": "/data",
+                    "notification_script": "/custom/script.py",
+                }
+            ]
+        },
+    )
+    _global_config, user_configs = parse(["--config", config_path])
+    assert str(user_configs[0].notification_script) == "/custom/script.py"
+
+
 def test_print_config_prints_resolved_yaml_and_returns_zero(
     tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

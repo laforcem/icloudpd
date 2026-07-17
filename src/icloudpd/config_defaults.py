@@ -9,6 +9,12 @@ with these values applied as the final fallback in `map_to_config` /
 
 from typing import Any, Dict
 
+# Path baked into the icloudpd image (see Dockerfile) for the generic
+# stdin-JSON-to-URL notification forwarder. `notification_forwarder: true`
+# in a user's config resolves to this path instead of requiring it spelled
+# out (and kept in sync) in every deployment.
+BUILTIN_NOTIFICATION_FORWARDER_PATH = "/usr/local/bin/notification_script.py"
+
 GLOBAL_OPTION_DEFAULTS: Dict[str, Any] = {
     "use_os_locale": False,
     "only_print_filenames": False,
@@ -42,6 +48,7 @@ USER_OPTION_DEFAULTS: Dict[str, Any] = {
     "folder_structure": "{:%Y/%m/%d}",
     "set_exif_datetime": False,
     "notification_script": None,
+    "notification_forwarder": False,
     "session_expiry_warning_days": 7,
     "session_expiry_notification_interval_hours": 24,
     "delete_after_download": False,
