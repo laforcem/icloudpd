@@ -1,6 +1,6 @@
 services:
   icloudpd:
-    image: icloudpd/icloudpd:latest
+    image: ghcr.io/laforcem/icloudpd:latest
     command:
       - "--mfa-provider"
       - "webui"
@@ -15,14 +15,13 @@ services:
     volumes:
       - ./data:/data
       - ./config:/home/icloudpd/.pyicloud
-      - ./notification_script.py:/usr/local/bin/notification_script.py:ro
     environment:
       TELEGRAM_BOT_NOTIFY_URL: "http://telegram-bot:8090/notify"
     networks:
       - icloudpd-net
 
   telegram-bot:
-    build: .
+    image: ghcr.io/laforcem/icloudpd-telegram-bot:latest
     environment:
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
       TELEGRAM_ALLOWED_CHAT_IDS: "${TELEGRAM_ALLOWED_CHAT_IDS}"

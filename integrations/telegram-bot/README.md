@@ -36,7 +36,7 @@ repo root for the full design rationale.
 
 ```bash
 cp .env.example .env  # fill in TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS
-docker compose -f docker-compose.example.yml up --build
+docker compose -f docker-compose.example.yml up
 ```
 
 ## Testing
