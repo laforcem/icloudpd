@@ -1,0 +1,13 @@
+app:
+  mfa_provider: webui
+  watch_with_interval: 3600
+
+all_users:
+  directory: /data
+
+users:
+  - username: you@icloud.com
+    password_file: /run/secrets/icloud_password_you
+  - username: partner@icloud.com
+    password_file: /run/secrets/icloud_password_partner
+    directory: /data/account2

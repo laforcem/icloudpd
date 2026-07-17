@@ -72,6 +72,33 @@ icloudpd --username my@email.address --password my_password --auth-only
 > [!TIP]
 > This feature can also be used to check and verify that the session is still authenticated. 
 
+## Configuration File
+
+Instead of long command lines, `icloudpd` can be configured with a YAML file. By default it looks for `/etc/icloudpd/config.yaml`; use `--config <path>` to point at a different file. If neither is present, `icloudpd` behaves exactly as it does with plain CLI arguments.
+
+```yaml
+app:                          # process-wide settings — one value for the whole run
+  mfa_provider: webui
+  watch_with_interval: 3600
+
+all_users:                    # applies to every account below, unless overridden
+  directory: /data
+
+users:                        # one block per account
+  - username: you@icloud.com
+  - username: partner@icloud.com
+    directory: /data/account2   # overrides all_users.directory for this account only
+    password_file: /run/secrets/icloud_password_partner
+```
+
+Any setting also given as a CLI arg overrides the config file for that run (e.g. `icloudpd --config /etc/icloudpd/config.yaml --dry-run`). When multiple accounts are defined in the file, a CLI override applies uniformly to all of them — there's no way to target just one account via a CLI flag; use the file's per-account block for that. If a config file is in use, per-account CLI arguments (`-u`/`--username`) are not supported — define accounts in the file's `users:` list instead.
+
+**Secrets** are never written into this file directly. Any secret (currently: the account password, via `password_file`) is a path to a separate file containing the value, read once at startup — the same convention Docker/Kubernetes/Compose secrets and images like `postgres`'s `POSTGRES_PASSWORD_FILE` use. A literal `password:` key in the config file is rejected at startup.
+
+Run `icloudpd --config <path> --print-config` to see how the config file, CLI overrides, and built-in defaults resolve for the most commonly used settings, without guessing at precedence by hand.
+
+See `docker-compose.example.yml` for a full Docker Compose deployment using this file, including how to source `password_file` from Compose's `secrets:` block.
+
 ## Contributing
 
 Want to contribute to iCloud Photos Downloader? Awesome! Check out the [contributing guidelines](CONTRIBUTING.md) to get involved.

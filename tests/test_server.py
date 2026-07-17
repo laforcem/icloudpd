@@ -108,6 +108,7 @@ def _user_config(username: str, cookie_directory: str) -> UserConfig:
     return UserConfig(
         username=username,
         password=None,
+        password_file=None,
         directory="/tmp/does-not-matter",
         auth_only=True,
         cookie_directory=cookie_directory,

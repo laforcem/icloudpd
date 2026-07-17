@@ -41,6 +41,7 @@ from icloudpd import download, exif_datetime, manifest, notifications, session_e
 from icloudpd.authentication import authenticator
 from icloudpd.autodelete import autodelete_photos
 from icloudpd.config import GlobalConfig, UserConfig
+from icloudpd.config_file import ConfigFileError
 from icloudpd.counter import Counter
 from icloudpd.filename_policies import build_filename_with_policies, create_filename_builder
 from icloudpd.log_level import LogLevel
@@ -171,6 +172,33 @@ def update_auth_error_in_webui(status_exchange: StatusExchange, error: str) -> b
 
 def dummy_password_writter(_u: str, _p: str) -> None:
     pass
+
+
+def resolve_constant_password(password: str | None, password_file: str | None) -> str | None:
+    """Resolve the constant password for `PasswordProvider.PARAMETER`.
+
+    `password_file` (a path to a file containing the secret) takes precedence
+    over the literal `password` value — the file-based form is the only one
+    supported by the YAML config file (see config_file.py), so any config-file
+    -driven run reaches this via `password_file`. `password` remains for
+    direct CLI (`-p`/`--password`) use, unchanged from today's behavior.
+
+    Note: this reads `password_file` fresh each time it's called. In watch
+    mode (`--watch-with-interval`), that means each watch cycle re-reads the
+    file rather than reading it once at process startup — harmless in
+    practice (same result each time, no rotation is implemented per the
+    design's non-goals), but worth knowing if you're reasoning about when
+    the file is actually accessed.
+    """
+    if password_file is not None:
+        try:
+            with open(password_file, encoding="utf-8") as f:
+                return f.read().rstrip("\n")
+        except OSError as e:
+            raise ConfigFileError(
+                f"password_file {password_file!r} could not be read: {e}"
+            ) from e
+    return password
 
 
 def keyring_password_writter(logger: Logger) -> Callable[[str, str], None]:
@@ -360,7 +388,11 @@ def _process_all_users_once(
                         return password_provider
 
                     password_providers_dict[provider] = (
-                        create_constant_password_provider(user_config.password),
+                        create_constant_password_provider(
+                            resolve_constant_password(
+                                user_config.password, user_config.password_file
+                            )
+                        ),
                         dummy_password_writter,
                     )
 

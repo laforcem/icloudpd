@@ -1,6 +1,7 @@
 import datetime
 import inspect
 import os
+import pathlib
 import shutil
 import zoneinfo
 from argparse import ArgumentError
@@ -8,6 +9,7 @@ from typing import Sequence, Tuple
 from unittest import TestCase
 
 import pytest
+import yaml as _yaml  # only used to write fixture files in these tests
 
 from icloudpd.cli import format_help, parse
 from icloudpd.config import GlobalConfig, UserConfig
@@ -208,6 +210,7 @@ class CliTestCase(TestCase):
                             auth_only=False,
                             cookie_directory="~/.pyicloud",
                             password=None,
+                            password_file=None,
                             sizes=[AssetVersionSize.ORIGINAL],
                             live_photo_size=LivePhotoVersionSize.ORIGINAL,
                             recent=None,
@@ -241,6 +244,7 @@ class CliTestCase(TestCase):
                             cookie_directory="~/.pyicloud",
                             username="u2",
                             password=None,
+                            password_file=None,
                             sizes=[AssetVersionSize.ORIGINAL],
                             live_photo_size=LivePhotoVersionSize.ORIGINAL,
                             recent=None,
@@ -311,6 +315,7 @@ class CliTestCase(TestCase):
                             auth_only=False,
                             cookie_directory="~/.pyicloud",
                             password=None,
+                            password_file=None,
                             sizes=[AssetVersionSize.ORIGINAL],
                             live_photo_size=LivePhotoVersionSize.ORIGINAL,
                             recent=None,
@@ -573,3 +578,171 @@ def test_webui_port_custom_value() -> None:
         ["--directory", "abc", "--username", "u1", "--webui-port", "9999"]
     )
     assert global_config.webui_port == 9999
+
+
+def _write_config(tmp_path: pathlib.Path, data: dict) -> str:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_yaml.safe_dump(data))
+    return str(config_path)
+
+
+def test_config_file_drives_multi_account_run(tmp_path: pathlib.Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "app": {"mfa_provider": "webui", "watch_with_interval": 3600},
+            "all_users": {"directory": "/data"},
+            "users": [
+                {"username": "you@icloud.com"},
+                {"username": "partner@icloud.com", "directory": "/data/account2"},
+            ],
+        },
+    )
+    global_config, user_configs = parse(["--config", config_path])
+    assert global_config.mfa_provider == MFAProvider.WEBUI
+    assert global_config.watch_with_interval == 3600
+    assert len(user_configs) == 2
+    assert user_configs[0].username == "you@icloud.com"
+    assert user_configs[0].directory == "/data"
+    assert user_configs[1].username == "partner@icloud.com"
+    assert user_configs[1].directory == "/data/account2"
+
+
+def test_cli_arg_overrides_config_file_value(tmp_path: pathlib.Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "all_users": {"directory": "/data"},
+            "users": [{"username": "you@icloud.com"}],
+        },
+    )
+    _global_config, user_configs = parse(
+        ["--config", config_path, "--directory", "/override"]
+    )
+    assert user_configs[0].directory == "/override"
+
+
+def test_config_file_and_cli_username_are_mutually_exclusive(tmp_path: pathlib.Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {"users": [{"username": "you@icloud.com", "directory": "/data"}]},
+    )
+    with pytest.raises(ArgumentError, match="users"):
+        parse(["--config", config_path, "-u", "someone@icloud.com", "--directory", "/x"])
+
+
+def test_default_config_path_used_when_no_flag_given(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        _yaml.safe_dump({"users": [{"username": "you@icloud.com", "directory": "/data"}]})
+    )
+    monkeypatch.setattr("icloudpd.cli.DEFAULT_CONFIG_PATH", str(config_path))
+    _global_config, user_configs = parse([])
+    assert user_configs[0].username == "you@icloud.com"
+
+
+def test_password_file_field_is_populated_from_config(tmp_path: pathlib.Path) -> None:
+    secret_path = tmp_path / "secret.txt"
+    secret_path.write_text("hunter2\n")
+    config_path = _write_config(
+        tmp_path,
+        {
+            "users": [
+                {
+                    "username": "you@icloud.com",
+                    "directory": "/data",
+                    "password_file": str(secret_path),
+                }
+            ]
+        },
+    )
+    _global_config, user_configs = parse(["--config", config_path])
+    assert user_configs[0].password_file == str(secret_path)
+
+
+def test_print_config_prints_resolved_yaml_and_returns_zero(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {"users": [{"username": "you@icloud.com", "directory": "/data"}]},
+    )
+    import sys as _sys
+
+    from icloudpd.cli import cli as cli_entrypoint
+
+    old_argv = _sys.argv
+    _sys.argv = ["icloudpd", "--config", config_path, "--print-config"]
+    try:
+        exit_code = cli_entrypoint()
+    finally:
+        _sys.argv = old_argv
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    parsed = _yaml.safe_load(captured.out)
+    assert parsed["users"][0]["username"] == "you@icloud.com"
+    assert parsed["users"][0]["directory"] == "/data"
+    assert parsed["app"]["mfa_provider"] == "console"
+
+
+def test_cli_reports_clear_error_for_malformed_config_file(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("app: [unterminated")
+
+    import sys as _sys
+
+    from icloudpd.cli import cli as cli_entrypoint
+
+    old_argv = _sys.argv
+    _sys.argv = ["icloudpd", "--config", str(config_path)]
+    try:
+        exit_code = cli_entrypoint()
+    finally:
+        _sys.argv = old_argv
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "failed to parse YAML" in captured.out or "failed to parse YAML" in captured.err
+
+
+def test_cli_reports_clear_error_when_run_with_configs_raises_config_file_error(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Exercises the `run_with_configs` error path (e.g. an unreadable
+    # `password_file` discovered during a real run, not just at --print-config
+    # time) — a ConfigFileError raised there must produce a clean CLI error,
+    # not a raw traceback, the same as one raised during config-file parsing.
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        _yaml.safe_dump({"users": [{"username": "you@icloud.com", "directory": "/data"}]})
+    )
+
+    import sys as _sys
+
+    import icloudpd.cli as cli_module
+    from icloudpd.config_file import ConfigFileError
+
+    def _raise_config_file_error(
+        _global_config: GlobalConfig, _user_configs: object
+    ) -> int:
+        raise ConfigFileError("password_file '/run/secrets/missing' could not be read")
+
+    monkeypatch.setattr(cli_module, "run_with_configs", _raise_config_file_error)
+
+    old_argv = _sys.argv
+    _sys.argv = ["icloudpd", "--config", str(config_path)]
+    try:
+        exit_code = cli_module.cli()
+    finally:
+        _sys.argv = old_argv
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "could not be read" in captured.out or "could not be read" in captured.err
