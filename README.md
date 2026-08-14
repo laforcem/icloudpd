@@ -1,5 +1,7 @@
 # icloudpd
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/laforcem/icloudpd)
+
 A command-line tool to download media from iCloud Photos. This is a Docker-first fork of [icloud_photos_downloader](https://github.com/icloud-photos-downloader/icloud_photos_downloader).
 
 > [!NOTE]
