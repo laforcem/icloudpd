@@ -422,19 +422,44 @@ def cmd_delta(args: argparse.Namespace) -> int:
     return 0
 
 
+DEFAULTS: Dict[str, Any] = {
+    "artifacts": str(STATE_DIR / "artifacts"),
+    "page_size": 20,
+    "count_samples": 3,
+    "direction": "DESCENDING",
+}
+
+
+def add_common_args(parser: argparse.ArgumentParser) -> None:
+    """Options accepted on either side of the subcommand.
+
+    default=SUPPRESS is load-bearing: the same options are registered on the
+    top-level parser and on every subparser, and a subparser with a real
+    default would overwrite a value already parsed from before the
+    subcommand. Suppressed options simply stay unset, so the real defaults
+    get filled in once, after parsing.
+    """
+    parser.add_argument("--artifacts", default=argparse.SUPPRESS)
+    parser.add_argument("--page-size", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--count-samples", type=int, default=argparse.SUPPRESS)
+    parser.add_argument(
+        "--direction", choices=["ASCENDING", "DESCENDING"], default=argparse.SUPPRESS
+    )
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--artifacts", default=str(STATE_DIR / "artifacts"))
-    parser.add_argument("--page-size", type=int, default=20)
-    parser.add_argument("--count-samples", type=int, default=3)
-    parser.add_argument("--direction", choices=["ASCENDING", "DESCENDING"], default="DESCENDING")
+    add_common_args(parser)
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("auth")
-    sub.add_parser("probe")
-    sub.add_parser("delta")
+    for name in ("auth", "probe", "delta"):
+        add_common_args(sub.add_parser(name))
 
     args = parser.parse_args()
+    for key, value in DEFAULTS.items():
+        if not hasattr(args, key):
+            setattr(args, key, value)
+
     return {"auth": cmd_auth, "probe": cmd_probe, "delta": cmd_delta}[args.cmd](args)
 
 
