@@ -98,10 +98,35 @@ def redact_params(params: Dict[str, Any]) -> Dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-def build_service() -> PyiCloudService:
+ENV_FILE = STATE_DIR / "env"
+
+
+def resolve_username() -> str:
+    """Apple ID from the environment, falling back to a gitignored env file.
+
+    The persisted session cannot supply this: it stores no Apple ID, and the
+    session filename is produced by sanitize_apple_id(), which strips '@' and
+    '.' and so cannot be reversed. The env file exists so an already-authed
+    run needs no interactive step and no credential in shell history.
+    """
     username = os.environ.get("ICLOUD_USERNAME")
-    if not username:
-        raise SystemExit("ICLOUD_USERNAME is not set")
+    if username:
+        return username
+
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text().splitlines():
+            line = line.strip().removeprefix("export ").strip()
+            if line.startswith("ICLOUD_USERNAME="):
+                return line.partition("=")[2].strip().strip("'\"")
+
+    raise SystemExit(
+        f"ICLOUD_USERNAME is not set. Either export it, or write it to {ENV_FILE} as:\n"
+        "  ICLOUD_USERNAME=you@example.com"
+    )
+
+
+def build_service() -> PyiCloudService:
+    username = resolve_username()
 
     cookie_dir = os.environ.get("ICLOUD_COOKIE_DIR") or str(DEFAULT_COOKIE_DIR)
     Path(cookie_dir).mkdir(parents=True, exist_ok=True)
