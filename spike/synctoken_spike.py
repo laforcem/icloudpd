@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import hashlib
 import json
 import logging
 import os
@@ -71,6 +72,19 @@ def fingerprint(value: Any) -> str:
         return "<absent>"
     s = str(value)
     return f"<len={len(s)} head={s[:6]!r} tail={s[-4:]!r}>"
+
+
+def token_hash(value: Any) -> str:
+    """Full-value equality check for an opaque token, safe to print.
+
+    `fingerprint` only exposes the first 6 and last 4 characters, which is
+    useless for deciding whether a 44-char base64 syncToken advanced — the
+    change would sit in the middle. A truncated SHA-256 compares the whole
+    value while revealing none of it.
+    """
+    if value is None:
+        return "<absent>"
+    return hashlib.sha256(str(value).encode()).hexdigest()[:12]
 
 
 def redact_params(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -174,6 +188,7 @@ def summarize(response: Dict[str, Any]) -> Dict[str, Any]:
         "tombstone_like_count": deleted_flags,
         "has_syncToken": "syncToken" in response,
         "syncToken_fp": fingerprint(response.get("syncToken")),
+        "syncToken_sha12": token_hash(response.get("syncToken")),
         "has_continuationMarker": "continuationMarker" in response,
         "continuationMarker_fp": fingerprint(response.get("continuationMarker")),
         "top_level_keys": sorted(response.keys()),
@@ -339,11 +354,24 @@ def cmd_probe(args: argparse.Namespace) -> int:
         "elapsed_ms_samples": timings,
     }
 
+    # --- 5. full-sweep control --------------------------------------------
+    # The paged window above CANNOT prove a mutation is visible. The list type
+    # sorts by asset date (capture time), not added date, so an uploaded photo
+    # with old EXIF lands mid-list and never enters page one. Without this
+    # control, "no new record after mutation" is ambiguous between "the token
+    # filtered it out" and "the window never covered it in the first place".
+    full_body = list_body(album, 0, args.full_limit, args.direction)
+    status, full_resp = post_query(svc, endpoint, base_params, full_body)
+    dump(artifacts, "08-full-sweep", full_resp)
+    results["full_sweep"] = {"status": status, **summarize(full_resp)}
+
     dump(artifacts, "00-probe-summary", results)
 
     state = load_state()
     state["sync_token"] = sync_token
+    state["baseline_token_sha12"] = token_hash(sync_token)
     state["baseline_record_names"] = results["baseline"]["record_names"]
+    state["baseline_full_names"] = results["full_sweep"]["record_names"]
     state["baseline_item_count"] = item_count
     state["page_size"] = page_size
     state["direction"] = args.direction
@@ -393,6 +421,30 @@ def cmd_delta(args: argparse.Namespace) -> int:
         )
         results[name] = entry
 
+    # THE CONTROL. Everything above is uninterpretable without this: it proves
+    # whether the mutation is visible to an unfiltered query at all. If this
+    # shows no change either, the experiment says nothing about syncToken.
+    full_body = list_body(album, 0, args.full_limit, direction)
+    status, full_resp = post_query(svc, endpoint, base_params, full_body)
+    dump(artifacts, "15-post-mutation-full-sweep", full_resp)
+    full = {"status": status, **summarize(full_resp)}
+    baseline_full = state.get("baseline_full_names", [])
+    full["new_names_vs_baseline"] = sorted(set(full["record_names"]) - set(baseline_full))
+    full["missing_names_vs_baseline"] = sorted(set(baseline_full) - set(full["record_names"]))
+    full["mutation_is_visible"] = bool(
+        full["new_names_vs_baseline"] or full["missing_names_vs_baseline"]
+    )
+    results["full_sweep_control"] = full
+
+    # Does the token advance when the zone changes? If it does, it is usable
+    # as a cheap change detector even though it is not a change log.
+    results["token_advance"] = {
+        "baseline_sha12": state.get("baseline_token_sha12"),
+        "after_mutation_sha12": token_hash(full_resp.get("syncToken")),
+        "token_advanced": token_hash(full_resp.get("syncToken"))
+        != state.get("baseline_token_sha12"),
+    }
+
     # Did the cheap count probe notice the mutation? This is the fallback
     # change-detector the spec calls out if the delta is a bust.
     count_body = album._count_query_gen(album.obj_type)
@@ -427,6 +479,7 @@ DEFAULTS: Dict[str, Any] = {
     "page_size": 20,
     "count_samples": 3,
     "direction": "DESCENDING",
+    "full_limit": 1000,
 }
 
 
@@ -442,6 +495,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--artifacts", default=argparse.SUPPRESS)
     parser.add_argument("--page-size", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--count-samples", type=int, default=argparse.SUPPRESS)
+    parser.add_argument("--full-limit", type=int, default=argparse.SUPPRESS)
     parser.add_argument(
         "--direction", choices=["ASCENDING", "DESCENDING"], default=argparse.SUPPRESS
     )
