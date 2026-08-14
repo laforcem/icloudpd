@@ -206,6 +206,23 @@ def get_album(svc: PyiCloudService) -> Any:
     return svc.photos.all
 
 
+def list_body(album: Any, offset: int, page_size: int, direction: str) -> Dict[str, Any]:
+    """A listing query with an overridable sort direction.
+
+    `_list_query_gen` hardcodes ASCENDING. Against a 4.5k-asset library that
+    puts the newest photo on the *last* page, so a first-page window would be
+    blind to the very mutation this spike introduces. DESCENDING puts the
+    mutation in page one, which is the only way the delta comparison means
+    anything.
+    """
+    body = album._list_query_gen(offset, album.list_type, album.query_filter)
+    body["resultsLimit"] = page_size
+    for clause in body["query"]["filterBy"]:
+        if clause.get("fieldName") == "direction":
+            clause["fieldValue"]["value"] = direction
+    return body
+
+
 def variant_params(
     base: Dict[str, Any], sync_token: str | None, swap_client_id: bool
 ) -> Dict[str, Any]:
@@ -231,10 +248,13 @@ def cmd_probe(args: argparse.Namespace) -> int:
     base_params = dict(album.params)
     page_size = args.page_size
 
-    body = album._list_query_gen(0, album.list_type, album.query_filter)
-    body["resultsLimit"] = page_size
+    body = list_body(album, 0, page_size, args.direction)
 
-    results: Dict[str, Any] = {"page_size": page_size, "base_params": redact_params(base_params)}
+    results: Dict[str, Any] = {
+        "page_size": page_size,
+        "direction": args.direction,
+        "base_params": redact_params(base_params),
+    }
 
     # --- 1. baseline -------------------------------------------------------
     t0 = time.monotonic()
@@ -292,8 +312,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
         cont["overlaps_page_one"] = bool(
             set(cont["record_names"]) & set(results["baseline"]["record_names"])
         )
-        rank_body = album._list_query_gen(page_size, album.list_type, album.query_filter)
-        rank_body["resultsLimit"] = page_size
+        rank_body = list_body(album, page_size, page_size, args.direction)
         _, rank_resp = post_query(svc, endpoint, base_params, rank_body)
         dump(artifacts, "06-startrank-page-two-response", rank_resp)
         cont["matches_startrank_page_two"] = (
@@ -327,6 +346,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
     state["baseline_record_names"] = results["baseline"]["record_names"]
     state["baseline_item_count"] = item_count
     state["page_size"] = page_size
+    state["direction"] = args.direction
     save_state(state)
 
     print(json.dumps(results, indent=2, sort_keys=True))
@@ -347,11 +367,14 @@ def cmd_delta(args: argparse.Namespace) -> int:
     endpoint = album.service_endpoint
     base_params = dict(album.params)
     page_size = state.get("page_size", args.page_size)
+    direction = state.get("direction", args.direction)
 
-    body = album._list_query_gen(0, album.list_type, album.query_filter)
-    body["resultsLimit"] = page_size
+    body = list_body(album, 0, page_size, direction)
 
-    results: Dict[str, Any] = {"stored_token_fp": fingerprint(sync_token)}
+    results: Dict[str, Any] = {
+        "stored_token_fp": fingerprint(sync_token),
+        "direction": direction,
+    }
 
     for name, params in [
         ("10-post-mutation-token-only", variant_params(base_params, sync_token, False)),
@@ -388,10 +411,7 @@ def cmd_delta(args: argparse.Namespace) -> int:
     # Deletions live in their own list_type; if the main delta is silent about
     # removals, this tells us whether removals are observable at all.
     deleted_album = svc.photos.recently_deleted
-    del_body = deleted_album._list_query_gen(
-        0, deleted_album.list_type, deleted_album.query_filter
-    )
-    del_body["resultsLimit"] = page_size
+    del_body = list_body(deleted_album, 0, page_size, direction)
     status, resp = post_query(svc, endpoint, dict(deleted_album.params), del_body)
     dump(artifacts, "14-recently-deleted", resp)
     results["recently_deleted"] = {"status": status, **summarize(resp)}
@@ -408,6 +428,7 @@ def main() -> int:
     parser.add_argument("--artifacts", default=str(STATE_DIR / "artifacts"))
     parser.add_argument("--page-size", type=int, default=20)
     parser.add_argument("--count-samples", type=int, default=3)
+    parser.add_argument("--direction", choices=["ASCENDING", "DESCENDING"], default="DESCENDING")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("auth")
     sub.add_parser("probe")
