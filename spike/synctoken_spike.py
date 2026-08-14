@@ -114,10 +114,17 @@ def resolve_username() -> str:
         return username
 
     if ENV_FILE.exists():
-        for line in ENV_FILE.read_text().splitlines():
-            line = line.strip().removeprefix("export ").strip()
+        for raw in ENV_FILE.read_text().splitlines():
+            line = raw.strip().removeprefix("export ").strip()
+            if not line or line.startswith("#"):
+                continue
             if line.startswith("ICLOUD_USERNAME="):
                 return line.partition("=")[2].strip().strip("'\"")
+            # A bare Apple ID on its own line is accepted too: the file exists
+            # to keep the value out of shell history, and demanding the KEY=
+            # form only buys a round trip when someone writes just the address.
+            if "=" not in line and "@" in line:
+                return line.strip("'\"")
 
     raise SystemExit(
         f"ICLOUD_USERNAME is not set. Either export it, or write it to {ENV_FILE} as:\n"
@@ -385,7 +392,12 @@ def cmd_probe(args: argparse.Namespace) -> int:
     # with old EXIF lands mid-list and never enters page one. Without this
     # control, "no new record after mutation" is ambiguous between "the token
     # filtered it out" and "the window never covered it in the first place".
-    full_body = list_body(album, 0, args.full_limit, args.direction)
+    # ASCENDING is not a preference here, it is the only correct choice.
+    # startRank=0 with DESCENDING means "start at the first item and walk
+    # backwards", which yields exactly one asset no matter how large
+    # resultsLimit is. Descending enumeration has to start at len-1 instead
+    # (see increment_offset(-1) in base.py). The control must sweep forward.
+    full_body = list_body(album, 0, args.full_limit, "ASCENDING")
     status, full_resp = post_query(svc, endpoint, base_params, full_body)
     dump(artifacts, "08-full-sweep", full_resp)
     results["full_sweep"] = {"status": status, **summarize(full_resp)}
@@ -449,7 +461,7 @@ def cmd_delta(args: argparse.Namespace) -> int:
     # THE CONTROL. Everything above is uninterpretable without this: it proves
     # whether the mutation is visible to an unfiltered query at all. If this
     # shows no change either, the experiment says nothing about syncToken.
-    full_body = list_body(album, 0, args.full_limit, direction)
+    full_body = list_body(album, 0, args.full_limit, "ASCENDING")
     status, full_resp = post_query(svc, endpoint, base_params, full_body)
     dump(artifacts, "15-post-mutation-full-sweep", full_resp)
     full = {"status": status, **summarize(full_resp)}
