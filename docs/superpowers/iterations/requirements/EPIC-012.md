@@ -1,9 +1,9 @@
 # EPIC-012 — Download integrity
 
 **Summary:** Download integrity
-**Stories:** STORY-0019, STORY-0020
+**Stories:** STORY-0019, STORY-0020, STORY-0136
 **Primary sources:** `docs/superpowers/specs/2026-08-14-go-rewrite-design.md`
-**Status:** 0/2 done
+**Status:** 0/3 done
 
 ## STORY-0019
 
@@ -36,5 +36,24 @@
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:216`
+
+**Status:** pending
+
+## STORY-0136
+
+**Epic:** EPIC-012 — Download integrity
+**Title:** Fetch an asset's bytes to a temp file and atomically rename into place
+
+**As a** engine developer
+**I want** internal/download to fetch an asset's version bytes over HTTP and write them to their final path via a temp-file-then-rename sequence
+**So that** the destination file only ever exists as a complete, correctly-named file — never a partial one
+
+**Acceptance criteria:**
+- AC-1: internal/download fetches the requested asset version's bytes from the URL provided by the CloudKit response and writes them to a temp file in the destination directory, then renames the temp file to its final path only after the write completes successfully. · impact:`local` · seam:`integration` · scenario:`SCENARIO-0116`
+
+**Sources:**
+- `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:89-90`
+
+**Split note:** added during ITER-0000 scope review — the design doc's package layout describes `internal/download` as owning "ranged resume, atomic temp+rename," but no extracted story governed the basic fetch-and-write mechanism itself (only its post-download checksum verification, STORY-0019). This story covers the non-resumable happy-path mechanism the walking skeleton needs; ranged resume is covered separately under graceful shutdown (EPIC-011).
 
 **Status:** pending

@@ -1,9 +1,9 @@
 # EPIC-021 — Manifest schema
 
 **Summary:** Manifest schema
-**Stories:** STORY-0040, STORY-0041, STORY-0042, STORY-0043, STORY-0044
+**Stories:** STORY-0040, STORY-0041, STORY-0042, STORY-0043, STORY-0044, STORY-0140
 **Primary sources:** `docs/superpowers/specs/2026-08-14-go-rewrite-design.md`
-**Status:** 0/5 done
+**Status:** 0/6 done
 
 ## STORY-0040
 
@@ -34,11 +34,29 @@
 
 **Acceptance criteria:**
 - AC-1: Two CPLAsset records with different recordName values but the same CPLMaster recordName resolve to a single row in the assets table, keyed on the CPLMaster recordName. · impact:`local` · seam:`integration`
-- AC-2: When duplicate asset records collide, the one with the newest addedDate wins (preserving the Python `_pick_newer_asset_record` semantics). · impact:`local` · seam:`unit`
-- AC-3: The assets table tracks last_seen_run and removed_remote_utc per asset. · impact:`none` · seam:`integration`
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:149-157`
+
+**Status:** pending
+
+## STORY-0140
+
+**Epic:** EPIC-021 — Manifest schema
+**Title:** Apply collision policy and removal tracking to asset identity
+
+**As a** engine developer
+**I want** duplicate CPLAsset metadata versions to collapse by newest addedDate, and the assets table to track last_seen_run and removed_remote_utc
+**So that** the manifest correctly resolves record-name churn and supports later reconciliation
+
+**Acceptance criteria:**
+- AC-1: When duplicate asset records collide, the one with the newest addedDate wins (preserving the Python `_pick_newer_asset_record` semantics). · impact:`local` · seam:`unit`
+- AC-2: The assets table tracks last_seen_run and removed_remote_utc per asset. · impact:`none` · seam:`integration`
+
+**Sources:**
+- `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:149-157`
+
+**Split note:** split from STORY-0041 during ITER-0000 scope review — a single-asset, single-run walking skeleton never produces a colliding duplicate or a removal to exercise these ACs; committing to this policy now would be speculative design ahead of evidence. Deferred to the core-sync iteration alongside the rest of the manifest schema.
 
 **Status:** pending
 

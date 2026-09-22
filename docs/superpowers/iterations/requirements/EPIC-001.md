@@ -1,9 +1,9 @@
 # EPIC-001 — Protocol client
 
 **Summary:** Protocol client
-**Stories:** STORY-0001, STORY-0002
+**Stories:** STORY-0001, STORY-0002, STORY-0137
 **Primary sources:** `docs/superpowers/specs/2026-08-14-go-rewrite-design.md`
-**Status:** 0/2 done
+**Status:** 0/3 done
 
 ## STORY-0001
 
@@ -30,14 +30,32 @@
 **Title:** Port CloudKit desiredKeys and zone discovery from the reference client
 
 **As a** engine developer
-**I want** internal/icloud/ckws and internal/icloud/photos to request the same desiredKeys field set as the Python reference client and to enumerate all available zones
-**So that** the Go client requests exactly the fields it needs and discovers every zone (Primary and any Shared Photo Libraries) the way the reference implementation does
+**I want** internal/icloud/ckws to request the same desiredKeys field set as the Python reference client
+**So that** the Go client requests exactly the fields it needs from CloudKit
 
 **Acceptance criteria:**
 - AC-1: Records/query requests issued by internal/icloud/ckws include the same desiredKeys field set as src/pyicloud_ipd/services/photos.py's photos_request. · impact:`none` · seam:`unit`
-- AC-2: Zone discovery enumerates all zones visible to the account, not just PrimarySync, matching the reference client's zone-discovery behavior. · impact:`local` · seam:`integration` · scenario:`SCENARIO-0115`
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:415`
+
+**Status:** pending
+
+## STORY-0137
+
+**Epic:** EPIC-001 — Protocol client
+**Title:** Discover every zone visible to the account, not just PrimarySync
+
+**As a** engine developer
+**I want** zone discovery to enumerate all zones visible to the account, including Shared Photo Libraries
+**So that** the Go client can sync shared zones the way the reference implementation does
+
+**Acceptance criteria:**
+- AC-1: Zone discovery enumerates all zones visible to the account, not just PrimarySync, matching the reference client's zone-discovery behavior. · impact:`local` · seam:`integration` · scenario:`SCENARIO-0115`
+
+**Sources:**
+- `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:415`
+
+**Split note:** split from STORY-0002 during ITER-0000 scope review — full multi-zone discovery is scope creep against the walking skeleton's single-asset-from-PrimarySync journey; deferred to the iteration that introduces shared-zone sync.
 
 **Status:** pending

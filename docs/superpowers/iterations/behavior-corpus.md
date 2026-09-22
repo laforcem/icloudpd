@@ -24,8 +24,8 @@
 | SCENARIO-0018 | Validate refuses missing Telegram bot token | process-level | iteration | TBD | STORY-0025 |
 | SCENARIO-0019 | Validate refuses Telegram configured with empty allowed_chat_ids | process-level | iteration | TBD | STORY-0029 |
 | SCENARIO-0020 | Any allowed chat can control any account | app-level | iteration | TBD | STORY-0028 |
-| SCENARIO-0021 | Container starts serve by default; validate/print-config/run-once operate independently | process-level | iteration | TBD | STORY-0030 |
-| SCENARIO-0022 | Fresh manifest is rebuilt by scanning disk on first run against existing library | integration | iteration | TBD | STORY-0031 |
+| SCENARIO-0021 | Container starts serve by default; validate/print-config/run-once operate independently | process-level | iteration | TBD | STORY-0030, STORY-0138 |
+| SCENARIO-0022 | Fresh manifest is rebuilt by scanning disk on first run against existing library | integration | iteration | TBD | STORY-0139 |
 | SCENARIO-0023 | Delta run cannot mass-prune the manifest when it lacks removal signal | integration | iteration | TBD | STORY-0034 |
 | SCENARIO-0024 | Full sweep marks unseen assets removed only on clean completion | integration | iteration | TBD | STORY-0034 |
 | SCENARIO-0025 | Composite enumerator runs delta and nightly full through the same engine path | integration | iteration | TBD | STORY-0035 |
@@ -118,4 +118,5 @@
 | SCENARIO-0112 | File_layout knobs each control their respective per-file behavior | unit | iteration | TBD | STORY-0134 |
 | SCENARIO-0113 | Retryable and fatal errors are classified distinctly in logs and metrics | unit | iteration | TBD | STORY-0018 |
 | SCENARIO-0114 | SRP handshake verified against known test vectors without network access | unit | iteration | TBD | STORY-0001 |
-| SCENARIO-0115 | Zone discovery enumerates every zone visible to the account | integration | iteration | TBD | STORY-0002 |
+| SCENARIO-0115 | Zone discovery enumerates every zone visible to the account | integration | iteration | TBD | STORY-0137 |
+| SCENARIO-0116 | Asset bytes are fetched and atomically written to their final path | integration | iteration | TBD | STORY-0136 |

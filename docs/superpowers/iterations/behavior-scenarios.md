@@ -561,7 +561,7 @@
 
 **Kind:** surface
 **Proof seam:** process-level
-**Owning stories:** STORY-0030
+**Owning stories:** STORY-0030, STORY-0138
 
 **Preconditions:**
 - A valid config is present
@@ -587,7 +587,7 @@
 
 **Kind:** surface
 **Proof seam:** integration
-**Owning stories:** STORY-0031
+**Owning stories:** STORY-0139
 
 **Preconditions:**
 - A directory of previously downloaded photo files exists with no Go-version manifest or Python-version state present
@@ -2877,7 +2877,7 @@
 
 **Kind:** surface
 **Proof seam:** integration
-**Owning stories:** STORY-0002
+**Owning stories:** STORY-0137
 
 **Preconditions:**
 - An account has both a PrimarySync zone and at least one Shared Photo Library zone
@@ -2894,3 +2894,25 @@
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:415`
+
+## SCENARIO-0116 — Asset bytes are fetched and atomically written to their final path
+
+**Kind:** surface
+**Proof seam:** integration
+**Owning stories:** STORY-0136
+
+**Preconditions:**
+- An asset version's download URL is available from a CloudKit response
+
+**Action:**
+- internal/download fetches the asset's bytes and writes them via a temp-file-then-rename sequence
+
+**Expected observables:**
+- No partial file ever exists at the asset's final destination path
+- The final path contains the complete, correctly-named file only after the fetch succeeds
+
+**Automation status:** pending
+**Execution command:** TBD
+
+**Sources:**
+- `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:89-90`
