@@ -89,18 +89,40 @@ With 20 assets and `resultsLimit=2` there are certainly further pages, and Apple
 
 ---
 
-## Open question that should be settled before this is relied on
+## Open question — resolved 2026-09-08
 
-**Does the token advance on a count-neutral change?** The entire argument for preferring the token over the count probe is that it should catch edits, favourite toggles, and add+delete pairs that leave `itemCount` unmoved. **That was not tested.** Both signals were only ever exercised against a deletion, which moves the count anyway.
+**Does the token advance on a count-neutral change?** Yes. Follow-up run: fresh baseline (`probe`), one photo toggled favourite via iCloud.com (no add/delete), then `delta`.
 
-If the token turns out to advance only when the count does, it offers nothing over the cheaper, simpler count probe. This is a five-minute follow-up: toggle a favourite, re-read the token.
+| | Before | After favourite toggle |
+|---|---|---|
+| Token | `380d6e006589` | `9646130157a8` |
+| `itemCount` | 19 | 19 |
+| Record set (names) | — | unchanged |
+
+The token advanced; the count probe did not (`detected_change: false`). This is the decisive case for preferring the token: it catches edits/favourites/add+delete pairs that leave `itemCount` unmoved, which the count probe by construction cannot. `full_sweep_control.mutation_is_visible: false` is expected here and not a contradiction — that control only diffs record *names* (add/remove), and a favourite toggle changes a field on an existing record, not the record set.
+
+**Conclusion: the token is strictly more sensitive than the count probe and should be the preferred 60s poll signal**, with the same caveats as before (n=1 per case, test account, 20 assets).
+
+## Addition case — resolved 2026-09-08
+
+The earlier addition attempt was invalidated by the `DESCENDING`+`startRank=0` harness bug, so uploads were never validly exercised. Follow-up run: fresh baseline (`probe`), one new photo uploaded via iCloud.com, then `delta`.
+
+| | Before | After upload |
+|---|---|---|
+| Token | `9646130157a8` | `9d665dd730f2` |
+| `itemCount` | 19 | 20 |
+| Full-sweep control | — | `mutation_is_visible: true` |
+
+The token advanced, and this time so did the count probe (`detected_change: true`) — an add moves `itemCount`, so this case doesn't differentiate the two signals the way the favourite toggle did. The DESCENDING page-one window also picked up the new asset directly, since a new upload sorts to rank 0; that is a property of the sort order, not evidence the token itself filtered anything — same caveat as every other resend result in this document.
+
+**What this closes:** the primary motivating case for near-real-time sync — a newly uploaded photo — is not blind to either candidate signal. Across all three tested mutation types (delete, count-neutral favourite toggle, upload), the token has advanced every time (n=1 each), and it remains the only signal that also caught the count-neutral case.
 
 ## Limits of this result
 
 - **Test account, 20 assets, recently created.** The negative result is the one that most deserves suspicion on a fresh account, since a token with no sync history behind it is exactly where "ignored" and "empty" are hardest to tell apart. That said, the token demonstrably *does* carry state — it advanced — so it is not merely a stub.
-- **The token advance is n=1.** One mutation, one observation.
-- **Deletion only.** The addition case was exercised only in an earlier run that a harness bug invalidated.
+- **Every token advance observed here is n=1** — one mutation, one observation, per case (delete, favourite, upload).
 - **Not run against the 4,527-asset production library.** Protocol semantics should not vary with row count, but the timings certainly will.
+- **No case has been tested where the token does NOT advance alongside a real change** (a false negative). Everything above shows the token moving when something changes; nothing yet rules out a change the token misses.
 
 ## Harness bugs found and fixed during the spike
 
