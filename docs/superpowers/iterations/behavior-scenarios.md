@@ -386,8 +386,8 @@
 - The asset is marked failed/not recorded as successfully downloaded in the manifest
 - The asset is retried on a subsequent run rather than being treated as complete
 
-**Automation status:** pending
-**Execution command:** TBD
+**Automation status:** automated
+**Execution command:** go test ./internal/download/... -run TestFetch_ChecksumMismatch_LeavesNoFinalFile
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:94`
@@ -557,11 +557,11 @@
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:52`
 
-## SCENARIO-0021 — Container starts serve by default; validate/print-config/run-once operate independently
+## SCENARIO-0021 — Container starts serve by default; run-once operates independently
 
 **Kind:** surface
 **Proof seam:** process-level
-**Owning stories:** STORY-0030, STORY-0138
+**Owning stories:** STORY-0030
 
 **Preconditions:**
 - A valid config is present
@@ -569,19 +569,19 @@
 **Action:**
 - Start the container image with no explicit command
 - Run the binary with `run-once` against an account
-- Run the binary with `print-config`
 
 **Expected observables:**
 - The `serve` subcommand runs, starting the always-on scheduler and health listener
 - A single sync pass executes and the process exits rather than staying resident
-- The effective config is printed with secrets redacted, not in plaintext
 - Each subcommand's process lifecycle matches its stated behavior (long-running vs one-shot)
 
-**Automation status:** pending
-**Execution command:** TBD
+**Automation status:** dispatch automated, full process-level pending
+**Execution command:** go test ./internal/cli/... -run TestDefaultCommand_IsServe|TestRun_NoArgs_DispatchesToServe|TestRun_MigrateIsNotASubcommand
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:58-60,102`
+
+**Split note (ITER-0000 PAR scope review):** print-config/redaction observable split out to SCENARIO-0120 (STORY-0138) — STORY-0138 is deferred to ITER-0002 and this scenario previously overclaimed coverage of it.
 
 ## SCENARIO-0022 — Fresh manifest is rebuilt by scanning disk on first run against existing library
 
@@ -726,8 +726,8 @@
 - The first run's status is recorded as failed/fatal for the account
 - The second run's status is recorded as successful despite the telemetry failure
 
-**Automation status:** pending
-**Execution command:** TBD
+**Automation status:** automated
+**Execution command:** go test ./internal/syncengine/... -run TestRun_StoreWriteFailure_AbortsRunFatal|TestRun_TelemetryFailure_DoesNotAbortRun
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:145-147`
@@ -2867,8 +2867,8 @@
 - Each computed proof matches the vector's expected output
 - SRP correctness is verified entirely offline via test vectors, independent of any live iCloud connection
 
-**Automation status:** pending
-**Execution command:** TBD
+**Automation status:** automated
+**Execution command:** go test ./internal/icloud/srp/...
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:27`
@@ -2911,8 +2911,130 @@
 - No partial file ever exists at the asset's final destination path
 - The final path contains the complete, correctly-named file only after the fetch succeeds
 
+**Automation status:** automated
+**Execution command:** go test ./internal/download/... -run TestFetch_HappyPath
+
+**Sources:**
+- `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:89-90`
+
+## SCENARIO-0117 — Enumerator Capabilities and Cursor contract holds for the full enumerator
+
+**Kind:** contract
+**Proof seam:** unit
+**Owning stories:** STORY-0033
+
+**Preconditions:**
+- A `full` Enumerator implementation exists satisfying the Enumerator interface
+
+**Action:**
+- Call Capabilities() on the full enumerator
+- Call Enumerate(ctx, from, yield) and inspect the returned Cursor
+
+**Expected observables:**
+- Capabilities() returns {ReportsRemovals:false, Exhaustive:true, Resumable:true}
+- The Cursor returned by Enumerate is persisted verbatim by the caller, with no interpretation of its contents
+
+**Automation status:** automated
+**Execution command:** go test ./internal/enumerate/full/...
+
+**Sources:**
+- `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:121-143`
+
+**Added (ITER-0000 PAR scope review):** new scenario giving STORY-0033 AC-1/AC-2 scenario coverage; JOURNEY-0001's single-account e2e run doesn't itself exercise Capabilities() field values or cursor persistence.
+
+## SCENARIO-0118 — Single shared SQLite DB opens regardless of configured account count
+
+**Kind:** surface
+**Proof seam:** integration
+**Owning stories:** STORY-0040
+
+**Preconditions:**
+- A config with N configured accounts (N > 1) and distinct download directories
+
+**Action:**
+- Start the service against the multi-account config
+
+**Expected observables:**
+- Exactly one database file exists at <state_dir>/icloudpd.db, opened in WAL mode
+- No per-account or per-directory database file is created
+
+**Automation status:** automated
+**Execution command:** go test ./internal/store/sqlite/... -run TestOneSharedDBRegardlessOfAccountCount
+
+**Sources:**
+- `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:149-157`
+
+**Added (ITER-0000 PAR scope review):** new scenario giving STORY-0040 AC-1 scenario coverage independent of the single-account JOURNEY-0001 e2e run.
+
+## SCENARIO-0119 — Duplicate CPLAsset records collapse to one manifest row by CPLMaster recordName
+
+**Kind:** contract
+**Proof seam:** integration
+**Owning stories:** STORY-0041
+
+**Preconditions:**
+- A synthetic fixture with two CPLAsset records that share the same CPLMaster recordName but have different CPLAsset recordName values
+
+**Action:**
+- Run the fixture through the manifest write path
+
+**Expected observables:**
+- Exactly one row exists in the assets table, keyed on the shared CPLMaster recordName
+- No claim is made about which version's metadata wins (that tie-break policy is STORY-0140, deferred)
+
+**Automation status:** automated
+**Execution command:** go test ./internal/store/sqlite/... -run TestSameCPLMasterKeyCollapsesToOneRow
+
+**Sources:**
+- `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:149-157`
+
+**Added (ITER-0000 PAR scope review):** new scenario giving STORY-0041 AC-1 scenario coverage; JOURNEY-0001's single-asset run structurally cannot produce a colliding duplicate.
+
+## SCENARIO-0120 — print-config prints the effective config with secrets redacted
+
+**Kind:** surface
+**Proof seam:** process-level
+**Owning stories:** STORY-0138
+
+**Preconditions:**
+- A valid config is present, including at least one secret-bearing field
+
+**Action:**
+- Run the binary with `print-config`
+
+**Expected observables:**
+- The effective config is printed with secrets redacted, not in plaintext
+
 **Automation status:** pending
 **Execution command:** TBD
 
 **Sources:**
-- `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:89-90`
+- `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:58-60,102`
+
+**Split note (ITER-0000 PAR scope review):** split out of SCENARIO-0021, which previously bundled this STORY-0138 observable with STORY-0030's (in-scope) serve-default behavior, overclaiming coverage this iteration can't close. Not part of ITER-0000; owned by STORY-0138 (ITER-0002).
+
+## SCENARIO-0121 — Operator runs check-protocol against the walking-skeleton auth path
+
+**Kind:** surface
+**Proof seam:** integration
+**Owning stories:** STORY-0001
+
+**Preconditions:**
+- Operator has valid real-account credentials
+- No Telegram 2FA infrastructure exists yet (deferred to ITER-0001)
+
+**Action:**
+- Operator runs `icloudpd check-protocol` manually against a live account
+
+**Expected observables:**
+- Authentication proceeds via the SRP flow this iteration builds
+- A pass/fail result is printed
+- No CI job triggered this check
+
+**Automation status:** verified live, dispatch automated
+**Execution command:** go test ./internal/cli/... -run TestRun_CheckProtocol_IsARecognizedSubcommand (dispatch); live run: go run ./cmd/icloudpd check-protocol -config <path> — PASSED against a real account 2026-09-22
+
+**Sources:**
+- `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:17-29`
+
+**Added (ITER-0000 PAR scope review):** thin walking-skeleton version of SCENARIO-0082, whose richer observables (Telegram-driven 2FA, tier-1 fixture regeneration) assume infrastructure STORY-0107/ITER-0001 builds. STORY-0001 AC-3 previously cited SCENARIO-0114, which is offline-only — the opposite of what AC-3 describes.

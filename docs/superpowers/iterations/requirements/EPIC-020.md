@@ -3,7 +3,7 @@
 **Summary:** Store failure semantics
 **Stories:** STORY-0038, STORY-0039
 **Primary sources:** `docs/superpowers/specs/2026-08-14-go-rewrite-design.md`
-**Status:** 0/2 done
+**Status:** 1/2 done
 
 ## STORY-0038
 
@@ -21,7 +21,7 @@
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:145-147`
 
-**Status:** pending
+**Status:** done:ITER-0000
 
 ## STORY-0039
 

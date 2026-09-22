@@ -3,7 +3,7 @@
 **Summary:** Enumeration seam
 **Stories:** STORY-0033, STORY-0034, STORY-0035, STORY-0036, STORY-0037
 **Primary sources:** `docs/superpowers/specs/2026-08-14-go-rewrite-design.md`
-**Status:** 0/5 done
+**Status:** 1/5 done
 
 ## STORY-0033
 
@@ -15,13 +15,15 @@
 **So that** the engine can support multiple enumeration strategies (full, delta, composite) without restructuring
 
 **Acceptance criteria:**
-- AC-1: Enumerator.Capabilities() returns a struct with ReportsRemovals, Exhaustive, and Resumable booleans, and Enumerate(ctx, from Cursor, yield) returns an updated opaque Cursor that is persisted verbatim without the engine interpreting its contents. · impact:`local` · seam:`unit`
-- AC-2: The `full` enumerator reports Capabilities{ReportsRemovals:false, Exhaustive:true, Resumable:true}; a `delta` enumerator reports {true, false, true}. · impact:`local` · seam:`unit`
+- AC-1: Enumerator.Capabilities() returns a struct with ReportsRemovals, Exhaustive, and Resumable booleans, and Enumerate(ctx, from Cursor, yield) returns an updated opaque Cursor that is persisted verbatim without the engine interpreting its contents. · impact:`local` · seam:`unit` · scenario:`SCENARIO-0117`
+- AC-2: The `full` enumerator reports Capabilities{ReportsRemovals:false, Exhaustive:true, Resumable:true}. · impact:`local` · seam:`unit` · scenario:`SCENARIO-0117`
+
+**Scope fix (ITER-0000 PAR scope review):** AC-2 previously also required a `delta` enumerator reporting `{true, false, true}`. The design spec (`docs/superpowers/specs/2026-08-14-go-rewrite-design.md:88`) explicitly marks `internal/enumerate/delta/` "DEFERRED for v1, backlogged" — not just deferred to a later iteration but excluded from v1 entirely. Committing a delta-enumerator capability assertion to the very first iteration contradicted that decision. The delta clause is cut; if delta is ever un-backlogged, its capability contract is scoped to whichever iteration actually builds it. Added scenario:`SCENARIO-0117` (new, dedicated integration test — JOURNEY-0001's single-account run doesn't itself exercise Capabilities() field values).
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:121-143`
 
-**Status:** pending
+**Status:** done:ITER-0000
 
 ## STORY-0034
 

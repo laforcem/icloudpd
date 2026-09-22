@@ -3,7 +3,7 @@
 **Summary:** Delivery
 **Stories:** STORY-0030, STORY-0031, STORY-0138, STORY-0139
 **Primary sources:** `docs/superpowers/specs/2026-08-14-go-rewrite-design.md`
-**Status:** 0/4 done
+**Status:** 2/4 done
 
 ## STORY-0030
 
@@ -18,10 +18,12 @@
 - AC-1: Running the container image with no explicit subcommand runs `serve`. · impact:`local` · seam:`process-level` · scenario:`SCENARIO-0021`
 - AC-2: No `migrate` subcommand exists; there is no built-in path to convert the old Python YAML config. · impact:`none` · seam:`unit`
 
+**Citation fix (ITER-0000 PAR scope review):** SCENARIO-0021 previously bundled STORY-0138's print-config/redaction observable with STORY-0030's serve-default/run-once observables, overclaiming coverage this iteration can't close (STORY-0138 is deferred to ITER-0002). SCENARIO-0021 is narrowed to only the serve-default and run-once-independent-lifecycle observables STORY-0030 delivers; the print-config observable is split into new scenario:`SCENARIO-0120`, owned by STORY-0138.
+
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:58-60`
 
-**Status:** pending
+**Status:** done:ITER-0000
 
 ## STORY-0031
 
@@ -38,7 +40,7 @@
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:60-61`
 
-**Status:** pending
+**Status:** done:ITER-0000
 
 ## STORY-0138
 

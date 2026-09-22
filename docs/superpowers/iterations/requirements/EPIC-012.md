@@ -3,7 +3,7 @@
 **Summary:** Download integrity
 **Stories:** STORY-0019, STORY-0020, STORY-0136
 **Primary sources:** `docs/superpowers/specs/2026-08-14-go-rewrite-design.md`
-**Status:** 0/3 done
+**Status:** 2/3 done
 
 ## STORY-0019
 
@@ -15,12 +15,14 @@
 **So that** corrupted or truncated downloads are detected rather than silently accepted
 
 **Acceptance criteria:**
-- AC-1: internal/download computes a checksum over the fully downloaded (or resumed) file and compares it to the fileChecksum from asset-version metadata; a mismatch is treated as a download failure, not accepted. · impact:`local` · seam:`integration` · scenario:`SCENARIO-0012`
+- AC-1: internal/download computes a checksum over the fully downloaded (or resumed) file and compares it to the fileChecksum from asset-version metadata; a mismatch is treated as a download failure, not accepted. · impact:`local` · seam:`integration` · scenario:`SCENARIO-0013`
+
+**Citation fix (ITER-0000 PAR scope review):** AC-1 previously cited SCENARIO-0012, which covers SIGTERM-triggered ranged-resume — out of scope for this iteration per STORY-0136's split note. SCENARIO-0013 ("Checksum mismatch is treated as a failed download") is the scenario that actually matches this AC.
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:94`
 
-**Status:** pending
+**Status:** done:ITER-0000
 
 ## STORY-0020
 
@@ -56,4 +58,4 @@
 
 **Split note:** added during ITER-0000 scope review — the design doc's package layout describes `internal/download` as owning "ranged resume, atomic temp+rename," but no extracted story governed the basic fetch-and-write mechanism itself (only its post-download checksum verification, STORY-0019). This story covers the non-resumable happy-path mechanism the walking skeleton needs; ranged resume is covered separately under graceful shutdown (EPIC-011).
 
-**Status:** pending
+**Status:** done:ITER-0000

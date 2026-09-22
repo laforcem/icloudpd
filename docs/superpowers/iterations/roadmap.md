@@ -14,6 +14,14 @@
 - Added STORY-0136 (new) — the actual HTTP fetch-and-atomic-write mechanism was a real gap: STORY-0019 only covered post-download checksum verification, and no story governed the fetch itself.
 - Added STORY-0132 (EPIC-039, already extracted, previously unscheduled) — the composition-root/narrow-options-struct discipline (`internal/app` builds `syncengine.Options` etc., never passes the whole config struct into the engine) is exactly the failure mode the spec calls "most likely wrong," and is cheapest to establish in the very first iteration that does any wiring.
 
+**Second PAR review pass (pre-implementation scope review, before any code written):** Two independent scope reviewers both returned REVISE, converging on the same core issues (plus one unique finding from Reviewer B). Applied:
+- Fixed STORY-0019 AC-1's scenario citation from SCENARIO-0012 (out-of-scope SIGTERM/ranged-resume) to SCENARIO-0013 (checksum mismatch — matches the AC text).
+- Cut STORY-0033 AC-2's `delta` enumerator capability-values clause — the spec (`2026-08-14-go-rewrite-design.md:88`) marks delta "DEFERRED for v1, backlogged," not just deferred to a later iteration. AC-2 now asserts only `full`'s capability values. Added SCENARIO-0117 for AC-1/AC-2 coverage.
+- Narrowed STORY-0041's narrative (it claimed the newest-addedDate collision tie-break, which is STORY-0140's AC-1, already correctly deferred) and added SCENARIO-0119 — a dedicated fixture-based scenario, since JOURNEY-0001's single-asset run can't produce a colliding duplicate.
+- Added SCENARIO-0118 for STORY-0040 AC-1 (single shared DB regardless of account count) — previously uncited and unprovable by the single-account journey.
+- Split SCENARIO-0021: narrowed to STORY-0030's serve-default/run-once observables only; print-config/redaction split out to new SCENARIO-0120 owned by STORY-0138 (ITER-0002), since STORY-0021 previously overclaimed coverage of a deferred story's behavior.
+- Fixed STORY-0001 AC-3's scenario citation — it cited SCENARIO-0114, which is explicitly offline-only, the opposite of AC-3's live-verification subject. Added SCENARIO-0121, a thin walking-skeleton version of the richer SCENARIO-0082 (which assumes STORY-0107/ITER-0001 infrastructure not yet built).
+
 **Non-goals, stated explicitly so they aren't silently assumed proven:**
 - This iteration proves the `Enumerator`/`Capabilities` *type contract* (STORY-0033) via a single, first-ever run. It does **not** exercise the capability-gated removal/reconciliation branching (an asset present in a prior manifest but absent from a new enumeration) — that requires a second run against a stale manifest, which ITER-0003's core-sync work will cover with a dedicated two-run scenario.
 - JOURNEY-0001's initial proof-run requires a real iCloud account and live credentials (SRP/2FA cannot be faked). Repeatable CI verification of the protocol layer without live credentials — via `ckwstest`'s fake CloudKit server and codec fixtures — is ITER-0001's job, not this iteration's.
@@ -34,7 +42,7 @@
 - STORY-0132 (EPIC-039 — Architecture Discipline): Keep internal/config out of the sync engine's API surface
 - STORY-0135 (EPIC-041 — Process model): Scope the walking skeleton as the first iteration
 
-**Status:** pending
+**Status:** in-progress — 11 of 12 stories done (see requirements/EPIC-*.md), blocked on completing JOURNEY-0001's live download proof. All protocol/engine/download/store/CLI code is implemented and unit/integration tested (see behavior-scenarios.md's automation status for SCENARIO-0114/0013/0116/0117/0118/0119/0027/0021). Live validation against a real account confirmed the SRP handshake, 2FA, session trust, and accountLogin all succeed against production Apple servers (SCENARIO-0121, `check-protocol` PASSED 2026-09-22). The CloudKit records/query call after accountLogin returns `AUTHENTICATION_FAILED` ("no auth method found"); root cause not yet confirmed — candidates are a remaining protocol-header gap or Apple-side rate-limiting from repeated auth attempts during debugging. STORY-0135 (which requires JOURNEY-0001 closed) is the only story not yet done. See iteration-log.md for full detail and the retry plan.
 
 ## Iteration list
 

@@ -3,7 +3,7 @@
 **Summary:** Manifest schema
 **Stories:** STORY-0040, STORY-0041, STORY-0042, STORY-0043, STORY-0044, STORY-0140
 **Primary sources:** `docs/superpowers/specs/2026-08-14-go-rewrite-design.md`
-**Status:** 0/6 done
+**Status:** 2/6 done
 
 ## STORY-0040
 
@@ -15,30 +15,34 @@
 **So that** operations stay simple (one WAL file, one backup target, one place to look) rather than requiring per-account or per-directory databases
 
 **Acceptance criteria:**
-- AC-1: The service opens exactly one database file at <state_dir>/icloudpd.db in WAL mode, regardless of the number of configured accounts or download directories. · impact:`local` · seam:`integration`
+- AC-1: The service opens exactly one database file at <state_dir>/icloudpd.db in WAL mode, regardless of the number of configured accounts or download directories. · impact:`local` · seam:`integration` · scenario:`SCENARIO-0118`
 - AC-2: No cross-account database transaction is ever required or performed, since mirror batches, thresholds, and trip state are strictly per-account elsewhere in the design. · impact:`none` · seam:`integration`
+
+**Citation fix (ITER-0000 PAR scope review):** AC-1 had no scenario citation, and JOURNEY-0001's single-account run doesn't itself exercise the "regardless of N accounts" claim. Added scenario:`SCENARIO-0118` — a dedicated integration test configuring multiple accounts and asserting a single DB file, proven independently of the live e2e journey.
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:149-157`
 
-**Status:** pending
+**Status:** done:ITER-0000
 
 ## STORY-0041
 
 **Epic:** EPIC-021 — Manifest schema
-**Title:** Identify assets by CPLMaster recordName, collapsing metadata-only duplicates
+**Title:** Identify assets by CPLMaster recordName
 
 **As a** engine developer
-**I want** the assets table primary key to be (account_id, zone_kind, zone_name, record_name) where record_name is the CPLMaster recordName, and duplicate CPLAsset metadata versions to collapse by newest addedDate
+**I want** the assets table primary key to be (account_id, zone_kind, zone_name, record_name) where record_name is the CPLMaster recordName
 **So that** CPLAsset.recordName churn (metadata versioning) does not create duplicate asset identities in the manifest
 
 **Acceptance criteria:**
-- AC-1: Two CPLAsset records with different recordName values but the same CPLMaster recordName resolve to a single row in the assets table, keyed on the CPLMaster recordName. · impact:`local` · seam:`integration`
+- AC-1: Two CPLAsset records with different recordName values but the same CPLMaster recordName resolve to a single row in the assets table, keyed on the CPLMaster recordName. · impact:`local` · seam:`integration` · scenario:`SCENARIO-0119`
+
+**Citation fix (ITER-0000 PAR scope review):** The narrative previously claimed "duplicate CPLAsset metadata versions... collapse by newest addedDate" — that collision-tiebreak policy is STORY-0140's AC-1, already correctly deferred out of this iteration; the narrative wasn't pruned to match. Narrowed to what this story's own AC-1 delivers: resolving to a single row keyed by CPLMaster recordName, with no claim about which version wins a collision. AC-1 also had no scenario citation and cannot be proven by JOURNEY-0001 (a single-asset run never produces a colliding duplicate). Added scenario:`SCENARIO-0119` — a dedicated integration test with a synthetic duplicate-record fixture, not the live e2e journey.
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:149-157`
 
-**Status:** pending
+**Status:** done:ITER-0000
 
 ## STORY-0140
 

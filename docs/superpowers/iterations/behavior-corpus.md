@@ -16,7 +16,7 @@
 | SCENARIO-0010 | All accounts failing flips readiness to not-ready | app-level | iteration | TBD | STORY-0017 |
 | SCENARIO-0011 | Global rate limiter caps total request rate regardless of account count | integration | iteration | TBD | STORY-0016 |
 | SCENARIO-0012 | Graceful shutdown allows a download to resume rather than restart | integration | iteration | TBD | STORY-0017, STORY-0019 |
-| SCENARIO-0013 | Checksum mismatch is treated as a failed download | integration | iteration | TBD | STORY-0019 |
+| SCENARIO-0013 | Checksum mismatch is treated as a failed download | integration | iteration | go test ./internal/download/... -run TestFetch_ChecksumMismatch | STORY-0019 |
 | SCENARIO-0014 | Rotated secret file is picked up live without restart | integration | iteration | TBD | STORY-0021 |
 | SCENARIO-0015 | Credential source chain falls back from file to env to memory cache | integration | iteration | TBD | STORY-0022 |
 | SCENARIO-0016 | Proactive 2FA refresh succeeds without an on-disk password within same process lifetime | integration | iteration | TBD | STORY-0026 |
@@ -24,13 +24,13 @@
 | SCENARIO-0018 | Validate refuses missing Telegram bot token | process-level | iteration | TBD | STORY-0025 |
 | SCENARIO-0019 | Validate refuses Telegram configured with empty allowed_chat_ids | process-level | iteration | TBD | STORY-0029 |
 | SCENARIO-0020 | Any allowed chat can control any account | app-level | iteration | TBD | STORY-0028 |
-| SCENARIO-0021 | Container starts serve by default; validate/print-config/run-once operate independently | process-level | iteration | TBD | STORY-0030, STORY-0138 |
+| SCENARIO-0021 | Container starts serve by default; run-once operates independently | process-level | iteration | go test ./internal/cli/... | STORY-0030 |
 | SCENARIO-0022 | Fresh manifest is rebuilt by scanning disk on first run against existing library | integration | iteration | TBD | STORY-0139 |
 | SCENARIO-0023 | Delta run cannot mass-prune the manifest when it lacks removal signal | integration | iteration | TBD | STORY-0034 |
 | SCENARIO-0024 | Full sweep marks unseen assets removed only on clean completion | integration | iteration | TBD | STORY-0034 |
 | SCENARIO-0025 | Composite enumerator runs delta and nightly full through the same engine path | integration | iteration | TBD | STORY-0035 |
 | SCENARIO-0026 | Re-visiting assets after server index drift causes no duplicate manifest rows | integration | iteration | TBD | STORY-0036 |
-| SCENARIO-0027 | A store write failure aborts the account run while telemetry failures do not | integration | iteration | TBD | STORY-0038 |
+| SCENARIO-0027 | A store write failure aborts the account run while telemetry failures do not | integration | iteration | go test ./internal/syncengine/... | STORY-0038 |
 | SCENARIO-0028 | Switching an account from full to delta strategy preserves independent cursors | integration | iteration | TBD | STORY-0039 |
 | SCENARIO-0029 | Manifest survives a download-root remount via relative paths | integration | iteration | TBD | STORY-0042 |
 | SCENARIO-0030 | Live Photo companion missing does not trigger deletion while the primary file remains | integration | iteration | TBD | STORY-0043 |
@@ -117,6 +117,11 @@
 | SCENARIO-0111 | Configuring a Shared Photo Library zone syncs that zone instead of PrimarySync | integration | iteration | TBD | STORY-0037 |
 | SCENARIO-0112 | File_layout knobs each control their respective per-file behavior | unit | iteration | TBD | STORY-0134 |
 | SCENARIO-0113 | Retryable and fatal errors are classified distinctly in logs and metrics | unit | iteration | TBD | STORY-0018 |
-| SCENARIO-0114 | SRP handshake verified against known test vectors without network access | unit | iteration | TBD | STORY-0001 |
+| SCENARIO-0114 | SRP handshake verified against known test vectors without network access | unit | iteration | go test ./internal/icloud/srp/... | STORY-0001 |
 | SCENARIO-0115 | Zone discovery enumerates every zone visible to the account | integration | iteration | TBD | STORY-0137 |
-| SCENARIO-0116 | Asset bytes are fetched and atomically written to their final path | integration | iteration | TBD | STORY-0136 |
+| SCENARIO-0116 | Asset bytes are fetched and atomically written to their final path | integration | iteration | go test ./internal/download/... -run TestFetch_HappyPath | STORY-0136 |
+| SCENARIO-0117 | Enumerator Capabilities and Cursor contract holds for the full enumerator | unit | iteration | go test ./internal/enumerate/full/... | STORY-0033 |
+| SCENARIO-0118 | Single shared SQLite DB opens regardless of configured account count | integration | iteration | go test ./internal/store/sqlite/... -run TestOneSharedDB | STORY-0040 |
+| SCENARIO-0119 | Duplicate CPLAsset records collapse to one manifest row by CPLMaster recordName | integration | iteration | go test ./internal/store/sqlite/... -run TestSameCPLMasterKey | STORY-0041 |
+| SCENARIO-0120 | print-config prints the effective config with secrets redacted | process-level | iteration | TBD | STORY-0138 |
+| SCENARIO-0121 | Operator runs check-protocol against the walking-skeleton auth path | integration | iteration | go run ./cmd/icloudpd check-protocol (live, PASSED 2026-09-22) | STORY-0001 |

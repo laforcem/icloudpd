@@ -3,7 +3,7 @@
 **Summary:** Protocol client
 **Stories:** STORY-0001, STORY-0002, STORY-0137
 **Primary sources:** `docs/superpowers/specs/2026-08-14-go-rewrite-design.md`
-**Status:** 0/3 done
+**Status:** 2/3 done
 
 ## STORY-0001
 
@@ -17,12 +17,14 @@
 **Acceptance criteria:**
 - AC-1: The binary contains a self-implemented SRP-6a + PBKDF2 s2k client and CloudKit web-service (ckws) transport; no import of chyroc/icloudgo, gophotocloud, or lukasmalkmus/icloud-go appears in go.mod. · impact:`none` · seam:`unit`
 - AC-2: SRP handshake logic is implemented as pure functions with no HTTP dependency, verifiable against known SRP-6a test vectors independent of network access. · impact:`local` · seam:`unit` · scenario:`SCENARIO-0114`
-- AC-3: A manual `check-protocol` command exists to verify live Apple protocol structure against the reverse-engineered client without requiring CI or a dedicated test account. · impact:`process-level` · seam:`process-level` · scenario:`SCENARIO-0114`
+- AC-3: A manual `check-protocol` command exists to verify live Apple protocol structure against the reverse-engineered client without requiring CI or a dedicated test account. · impact:`process-level` · seam:`process-level` · scenario:`SCENARIO-0121`
+
+**Citation fix (ITER-0000 PAR scope review):** AC-3 previously cited SCENARIO-0114, which is explicitly offline ("no network calls involved") — the opposite of AC-3's live-verification subject. SCENARIO-0082 ("Operator runs check-protocol by hand...") is the closer existing match by title, but its observables (Telegram-driven 2FA prompt, tier-1 fixture regeneration) assume infrastructure STORY-0107/ITER-0001 builds, not present yet in this iteration. Added scenario:`SCENARIO-0121` — a thin walking-skeleton version of the same check (auth via the SRP flow this iteration builds, pass/fail printed, no CI, no fixture regen, no Telegram 2FA loop since that infra is deferred to ITER-0001).
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:17-29`
 
-**Status:** pending
+**Status:** done:ITER-0000
 
 ## STORY-0002
 
@@ -39,7 +41,7 @@
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:415`
 
-**Status:** pending
+**Status:** done:ITER-0000
 
 ## STORY-0137
 

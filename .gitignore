@@ -35,3 +35,4 @@ node_modules/
 uv.lock
 .env
 integrations/telegram-bot/e2e-local/
+.dev-secrets/

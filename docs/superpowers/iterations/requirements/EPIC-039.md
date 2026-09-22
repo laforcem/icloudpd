@@ -3,7 +3,7 @@
 **Summary:** Architecture Discipline
 **Stories:** STORY-0132
 **Primary sources:** `docs/superpowers/specs/2026-08-14-go-rewrite-design.md`
-**Status:** 0/1 done
+**Status:** 1/1 done
 
 ## STORY-0132
 
@@ -20,4 +20,4 @@
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:407-409`
 
-**Status:** pending
+**Status:** done:ITER-0000
