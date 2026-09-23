@@ -15,9 +15,11 @@
 **So that** corrupted or truncated downloads are detected rather than silently accepted
 
 **Acceptance criteria:**
-- AC-1: internal/download computes a checksum over the fully downloaded (or resumed) file and compares it to the fileChecksum from asset-version metadata; a mismatch is treated as a download failure, not accepted. · impact:`local` · seam:`integration` · scenario:`SCENARIO-0013`
+- AC-1 (narrowed during ITER-0000's live proof-run — see below): internal/download compares the fully downloaded file's byte count against the size reported in asset-version metadata; a mismatch is treated as a download failure, not accepted. · impact:`local` · seam:`integration` · scenario:`SCENARIO-0013`
 
 **Citation fix (ITER-0000 PAR scope review):** AC-1 previously cited SCENARIO-0012, which covers SIGTERM-triggered ranged-resume — out of scope for this iteration per STORY-0136's split note. SCENARIO-0013 ("Checksum mismatch is treated as a failed download") is the scenario that actually matches this AC.
+
+**Scope narrowing (confirmed live during ITER-0000's JOURNEY-0001 proof-run, 2026-09-23):** AC-1 originally required comparing a computed content checksum against Apple's fileChecksum. Live testing showed this is infeasible with a standard hash function: decoding a real fileChecksum and comparing against SHA-1/SHA-256 of the actual downloaded bytes failed, and structural analysis showed the CPLMaster recordName is literally `0x01 || fileChecksum` — the field is Apple's MMCS content-addressable identifier (chunked, aggregated), not a plain digest. Independently confirmed: `steilerDev/icloud-photos-sync` (a mature, actively-maintained TypeScript iCloud Photos client) has an unused, commented-out `verifyChecksum` method whose own comment reads *"This is currently NOT implemented, as the checksum algorithm is unknown"* — its dead code shows it brute-forced every standard hash (MD5, SHA1, SHA224/256/384/512, SHA3 family, BLAKE2, SM3) across multiple encodings, plus HMAC-keyed variants, with no match. Reproducing MMCS's exact algorithm is out of scope for this iteration (and arguably for the project generally, absent a documented spec). AC-1 is narrowed to the size check `internal/download` can actually perform correctly; the raw fileChecksum value is still recorded in the manifest for possible future use. This is a real, evidence-based scope decision, not silent descoping — revisit if MMCS's algorithm is ever documented.
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:94`

@@ -2,7 +2,7 @@ package syncengine
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/sha1" //nolint:gosec // matches Apple's fileChecksum format, confirmed live
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -17,7 +17,7 @@ import (
 )
 
 func appleChecksum(data []byte) string {
-	sum := sha256.Sum256(data)
+	sum := sha1.Sum(data) //nolint:gosec // matches Apple's fileChecksum format, confirmed live
 	return base64.StdEncoding.EncodeToString(append([]byte{0x01}, sum[:]...))
 }
 

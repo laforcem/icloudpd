@@ -89,7 +89,7 @@ func downloadAndRecord(ctx context.Context, opts Options, a asset.Asset, now fun
 	}
 	finalPath := filepath.Join(opts.DownloadRoot, relPath)
 
-	if err := download.Fetch(ctx, opts.HTTPClient, a.Original.DownloadURL, finalPath, a.Original.Checksum); err != nil {
+	if err := download.Fetch(ctx, opts.HTTPClient, a.Original.DownloadURL, finalPath, a.Original.Size); err != nil {
 		return fmt.Errorf("syncengine: downloading %s: %w", a.Key.RecordName, err)
 	}
 

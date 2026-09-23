@@ -2,6 +2,7 @@ package photos
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -79,6 +80,39 @@ func TestListPage_DesiredKeys(t *testing.T) {
 	}
 	if captured.ZoneID.ZoneName != PrimarySyncZone {
 		t.Errorf("zoneID.zoneName = %q, want %q", captured.ZoneID.ZoneName, PrimarySyncZone)
+	}
+}
+
+// TestDecodeFilename_EncryptedBytesIsBase64Decoded proves a real bug found
+// during this iteration's live proof-run: Apple sends filenameEnc with
+// type ENCRYPTED_BYTES for real accounts, and treating that value as a
+// plain string (rather than base64-decoding it) produced garbled base64
+// filenames on disk instead of real ones like "IMG_0047.HEIC".
+func TestDecodeFilename_EncryptedBytesIsBase64Decoded(t *testing.T) {
+	want := "IMG_0047.HEIC"
+	valueJSON, _ := json.Marshal(base64.StdEncoding.EncodeToString([]byte(want)))
+	entry := ckws.FieldEntry{Type: "ENCRYPTED_BYTES", Value: valueJSON}
+
+	got, err := decodeFilename(entry)
+	if err != nil {
+		t.Fatalf("decodeFilename: %v", err)
+	}
+	if got != want {
+		t.Fatalf("decodeFilename = %q, want %q", got, want)
+	}
+}
+
+func TestDecodeFilename_PlainStringPassesThrough(t *testing.T) {
+	want := "photo.jpg"
+	valueJSON, _ := json.Marshal(want)
+	entry := ckws.FieldEntry{Type: "STRING", Value: valueJSON}
+
+	got, err := decodeFilename(entry)
+	if err != nil {
+		t.Fatalf("decodeFilename: %v", err)
+	}
+	if got != want {
+		t.Fatalf("decodeFilename = %q, want %q", got, want)
 	}
 }
 

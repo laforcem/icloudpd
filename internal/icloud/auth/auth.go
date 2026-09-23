@@ -233,12 +233,36 @@ func (c *Client) signInComplete(ctx context.Context, accountName, cValue string,
 }
 
 func sessionFromHeaders(h http.Header) *Session {
-	return &Session{
-		AccountCountry: h.Get("X-Apple-ID-Account-Country"),
-		SessionID:      h.Get("X-Apple-ID-Session-Id"),
-		SessionToken:   h.Get("X-Apple-Session-Token"),
-		TrustToken:     h.Get("X-Apple-TwoSV-Trust-Token"),
-		Scnt:           h.Get("scnt"),
+	sess := &Session{}
+	mergeSessionHeaders(sess, h)
+	return sess
+}
+
+// mergeSessionHeaders updates sess in place from any HEADER_DATA-listed
+// header present on a response, without clobbering fields the response
+// doesn't mention. This matters: base.py's session wrapper does this for
+// EVERY response (signin/complete, SMS verify, /2sv/trust, accountLogin),
+// accumulating session_data across the whole flow — most importantly
+// picking up a fresh X-Apple-Session-Token/X-Apple-TwoSV-Trust-Token that
+// Apple issues once 2FA actually completes. A caller that only captures
+// signin/complete's (pre-2FA, often-empty) headers and never updates from
+// later responses ends up handing accountLogin a stale token even after
+// 2FA nominally succeeds.
+func mergeSessionHeaders(sess *Session, h http.Header) {
+	if v := h.Get("X-Apple-ID-Account-Country"); v != "" {
+		sess.AccountCountry = v
+	}
+	if v := h.Get("X-Apple-ID-Session-Id"); v != "" {
+		sess.SessionID = v
+	}
+	if v := h.Get("X-Apple-Session-Token"); v != "" {
+		sess.SessionToken = v
+	}
+	if v := h.Get("X-Apple-TwoSV-Trust-Token"); v != "" {
+		sess.TrustToken = v
+	}
+	if v := h.Get("scnt"); v != "" {
+		sess.Scnt = v
 	}
 }
 
@@ -293,6 +317,7 @@ func (c *Client) AccountLogin(ctx context.Context, sess *Session) (map[string]an
 		return nil, err
 	}
 	defer resp.Body.Close()
+	mergeSessionHeaders(sess, resp.Header)
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err

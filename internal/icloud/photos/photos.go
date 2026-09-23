@@ -6,6 +6,7 @@ package photos
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -188,15 +189,43 @@ type resOriginalValue struct {
 	FileChecksum string `json:"fileChecksum"`
 }
 
+// decodeFilename ports PhotoAsset.calculate_filename: filenameEnc is a
+// {"type": ..., "value": ...} field whose value is either a plain string
+// (type STRING) or base64-encoded bytes (type ENCRYPTED_BYTES) — decoding
+// it unconditionally as a plain string, as an earlier version of this
+// function did, produces garbled base64 filenames on disk whenever Apple
+// sends the encrypted-bytes form. A missing field returns "" (the caller's
+// job to fall back to a fingerprint-based name, matching the reference
+// client's filename_with_fallback — not implemented in this walking
+// skeleton, which only needs a stable, correct name for one file).
+func decodeFilename(entry ckws.FieldEntry) (string, error) {
+	if entry.Type == "" && len(entry.Value) == 0 {
+		return "", nil // field absent
+	}
+	var value string
+	if err := json.Unmarshal(entry.Value, &value); err != nil {
+		return "", fmt.Errorf("parsing filenameEnc value: %w", err)
+	}
+	switch entry.Type {
+	case "", "STRING":
+		return value, nil
+	case "ENCRYPTED_BYTES":
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			return "", fmt.Errorf("base64-decoding filenameEnc: %w", err)
+		}
+		return string(decoded), nil
+	default:
+		return "", fmt.Errorf("unsupported filenameEnc type %q", entry.Type)
+	}
+}
+
 func buildAsset(master, assetRec ckws.Record, accountID, zoneName string) (asset.Asset, error) {
 	itemType, _ := fieldString(master.Fields, "itemType")
 
-	filename := ""
-	if entry, ok := master.Fields["filenameEnc"]; ok {
-		var s string
-		if err := json.Unmarshal(entry.Value, &s); err == nil {
-			filename = s
-		}
+	filename, err := decodeFilename(master.Fields["filenameEnc"])
+	if err != nil {
+		return asset.Asset{}, fmt.Errorf("asset %s: %w", master.RecordName, err)
 	}
 
 	addedMillis, _ := addedDateMillis(assetRec)

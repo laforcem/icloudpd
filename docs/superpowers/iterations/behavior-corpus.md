@@ -2,7 +2,7 @@
 
 | Scenario ID | Title | Proof seam | Run cadence | Command | Owning stories |
 |---|---|---|---|---|---|
-| JOURNEY-0001 | ITER-0000 walking skeleton threads every layer at minimum depth | e2e | sentinel | TBD | STORY-0135 |
+| JOURNEY-0001 | ITER-0000 walking skeleton threads every layer at minimum depth | e2e | sentinel | verified live 2026-09-23 against a real account (20 assets downloaded, correct filenames, manifest rows recorded); no repeatable CI harness yet — that's ITER-0001's job (ckwstest fake server) | STORY-0135 |
 | JOURNEY-0002 | run-once is idempotent against the manifest | e2e | sentinel | TBD | STORY-0116 |
 | SCENARIO-0001 | Folder-structure change does not trigger re-download | integration | iteration | TBD | STORY-0003 |
 | SCENARIO-0002 | Webhook notifier retries then drops on persistent failure | integration | iteration | TBD | STORY-0004 |
@@ -16,7 +16,7 @@
 | SCENARIO-0010 | All accounts failing flips readiness to not-ready | app-level | iteration | TBD | STORY-0017 |
 | SCENARIO-0011 | Global rate limiter caps total request rate regardless of account count | integration | iteration | TBD | STORY-0016 |
 | SCENARIO-0012 | Graceful shutdown allows a download to resume rather than restart | integration | iteration | TBD | STORY-0017, STORY-0019 |
-| SCENARIO-0013 | Checksum mismatch is treated as a failed download | integration | iteration | go test ./internal/download/... -run TestFetch_ChecksumMismatch | STORY-0019 |
+| SCENARIO-0013 | Size mismatch is treated as a failed download | integration | iteration | go test ./internal/download/... -run TestFetch_SizeMismatch_LeavesNoFinalFile | STORY-0019 |
 | SCENARIO-0014 | Rotated secret file is picked up live without restart | integration | iteration | TBD | STORY-0021 |
 | SCENARIO-0015 | Credential source chain falls back from file to env to memory cache | integration | iteration | TBD | STORY-0022 |
 | SCENARIO-0016 | Proactive 2FA refresh succeeds without an on-disk password within same process lifetime | integration | iteration | TBD | STORY-0026 |

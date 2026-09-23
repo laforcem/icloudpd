@@ -30,8 +30,10 @@
 - Process exited clean
 - No component (auth, Enumerator, download, manifest, app) required stubbing to complete the run
 
-**Automation status:** pending
-**Execution command:** TBD
+**Automation status:** verified live (manual) — no repeatable CI harness yet, that's ITER-0001's job (ckwstest fake CloudKit server)
+**Execution command:** manual: `go run ./cmd/icloudpd -config <path> run-once` against a live account with credentials in `.dev-secrets/`
+
+**Closed 2026-09-23:** ran end-to-end against a real account. Exceeded the "one asset" minimum — the full enumerator swept the whole PrimarySync library (20 assets), all downloaded with correct filenames and sizes, all recorded as manifest rows, process exited 0. Two real bugs were found and fixed along the way: (1) the SRP/2FA session wasn't accumulating Apple's post-2FA trust token from response headers, so CloudKit calls 401'd even after a successful trust handshake; (2) `filenameEnc` values of type ENCRYPTED_BYTES were being used as literal strings instead of base64-decoded, producing garbled filenames on disk. STORY-0019's checksum-verification AC was narrowed to a size check — see EPIC-012.md's STORY-0019 card for the evidence (Apple's fileChecksum is a proprietary MMCS content-addressable hash, not a reproducible digest; an independent mature project has the same algorithm marked "unknown").
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:365-368`
@@ -369,14 +371,14 @@
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:42,94`
 
-## SCENARIO-0013 — Checksum mismatch is treated as a failed download
+## SCENARIO-0013 — Size mismatch is treated as a failed download
 
 **Kind:** failure-recovery
 **Proof seam:** integration
 **Owning stories:** STORY-0019
 
 **Preconditions:**
-- A download completes but the resulting bytes' checksum does not match Apple's fileChecksum for that asset version
+- A download completes but the byte count doesn't match the size CloudKit reported for that asset version
 
 **Action:**
 - The download integrity check runs after the file is fully written
@@ -387,7 +389,9 @@
 - The asset is retried on a subsequent run rather than being treated as complete
 
 **Automation status:** automated
-**Execution command:** go test ./internal/download/... -run TestFetch_ChecksumMismatch_LeavesNoFinalFile
+**Execution command:** go test ./internal/download/... -run TestFetch_SizeMismatch_LeavesNoFinalFile
+
+**Narrowed (confirmed live during ITER-0000's JOURNEY-0001 proof-run, 2026-09-23):** originally titled "Checksum mismatch..." — narrowed to a size check after live testing confirmed Apple's fileChecksum is not a reproducible content hash (see STORY-0019's requirements card in EPIC-012.md for the full evidence).
 
 **Sources:**
 - `docs/superpowers/specs/2026-08-14-go-rewrite-design.md:94`

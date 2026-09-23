@@ -47,6 +47,7 @@ func (c *Client) TrustedPhoneNumbers(ctx context.Context, sess *Session) ([]Trus
 		return nil, err
 	}
 	defer resp.Body.Close()
+	mergeSessionHeaders(sess, resp.Header)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -114,6 +115,7 @@ func (c *Client) SendSMSCode(ctx context.Context, sess *Session, deviceID int) e
 		return err
 	}
 	defer resp.Body.Close()
+	mergeSessionHeaders(sess, resp.Header)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("auth: send SMS code: status %d: %s", resp.StatusCode, respBody)
@@ -141,6 +143,7 @@ func (c *Client) VerifySMSCode(ctx context.Context, sess *Session, deviceID int,
 		return err
 	}
 	defer resp.Body.Close()
+	mergeSessionHeaders(sess, resp.Header)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("auth: verify SMS code: status %d: %s", resp.StatusCode, respBody)
@@ -168,6 +171,7 @@ func (c *Client) TrustSession(ctx context.Context, sess *Session) error {
 		return err
 	}
 	defer resp.Body.Close()
+	mergeSessionHeaders(sess, resp.Header)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("auth: trust session: status %d: %s", resp.StatusCode, respBody)
