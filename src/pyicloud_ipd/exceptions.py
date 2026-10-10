@@ -49,6 +49,12 @@ class PyiCloudFailedMFAException(PyiCloudException):
     pass
 
 
+class PyiCloudMFATimeoutException(PyiCloudFailedMFAException):
+    """Gave up waiting for the user to complete multi-factor auth."""
+
+    pass
+
+
 class PyiCloud2SARequiredException(PyiCloudException):
     """iCloud 2SA required exception."""
 

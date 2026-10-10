@@ -89,6 +89,16 @@ class StatusExchange:
             )
             return True
 
+    def fail_trigger(self, error: str) -> bool:
+        """Back to waiting for an explicit trigger because requesting a code failed."""
+        with self.lock:
+            if self._status != Status.AWAITING_MFA_CODE:
+                return False
+
+            self._error = error
+            self._status = Status.AWAITING_MFA_TRIGGER
+            return True
+
     def get_error(self) -> str | None:
         with self.lock:
             if self._status not in [

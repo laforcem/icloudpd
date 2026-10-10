@@ -59,6 +59,7 @@ from pyicloud_ipd.exceptions import (
     PyiCloudConnectionErrorException,
     PyiCloudFailedLoginException,
     PyiCloudFailedMFAException,
+    PyiCloudMFATimeoutException,
     PyiCloudServiceNotActivatedException,
     PyiCloudServiceUnavailableException,
 )
@@ -1293,6 +1294,12 @@ def core_single_run(
                 continue
             else:
                 return 1
+        except PyiCloudMFATimeoutException as error:
+            # Nobody completed 2FA in time. Give up on this account for this cycle so
+            # the remaining accounts aren't blocked; the next cycle will prompt again.
+            logger.error(str(error))
+            dump_responses(logger.debug, captured_responses)
+            return 1
         except PyiCloudFailedMFAException as error:
             logger.info(str(error))
             dump_responses(logger.debug, captured_responses)

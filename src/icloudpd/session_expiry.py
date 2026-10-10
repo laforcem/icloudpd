@@ -1,8 +1,7 @@
 """Proactive warning before an iCloud session's auth cookies actually expire.
 
-Apple's login cookies (X-APPLE-WEBAUTH-USER, X_APPLE_WEB_KB-<hash>) carry
-their own Expires timestamp. This module reads the soonest of the two off
-the live session's cookie jar and, once remaining time drops under a
+Apple's login cookie (X-APPLE-WEBAUTH-USER) carries its own Expires
+timestamp. This module reads it off the live session's cookie jar and, once remaining time drops under a
 configurable threshold, fires a session_expiring_soon notification event
 at most once per a configurable interval.
 
@@ -23,8 +22,11 @@ from icloudpd import notifications
 from pyicloud_ipd.base import PyiCloudService, sanitize_apple_id
 
 _EVENT_TYPE = "session_expiring_soon"
+# Only X-APPLE-WEBAUTH-USER governs session validity: Apple rejects /validate (421)
+# without it, and it expires 30 days after login. X_APPLE_WEB_KB-<hash> carries an
+# unrelated lifetime that varies by login (minutes to ~2 months), so counting it
+# produces bogus "0.0 day(s)" warnings.
 _EXACT_COOKIE_NAMES = ("X-APPLE-WEBAUTH-USER",)
-_COOKIE_PREFIX = "X_APPLE_WEB_KB-"
 
 
 class _CookieLike(Protocol):
@@ -33,13 +35,13 @@ class _CookieLike(Protocol):
 
 
 def _is_relevant_cookie(name: str) -> bool:
-    return name in _EXACT_COOKIE_NAMES or name.startswith(_COOKIE_PREFIX)
+    return name in _EXACT_COOKIE_NAMES
 
 
 def earliest_relevant_expiry(cookies: Iterable[_CookieLike]) -> datetime.datetime | None:
     """Earliest Expires timestamp across the cookies that govern session validity.
 
-    Returns None if neither relevant cookie is present, or neither carries
+    Returns None if no relevant cookie is present, or none carries
     expiry data - callers should skip the check silently in that case.
     """
     expiries = [

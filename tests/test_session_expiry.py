@@ -21,18 +21,20 @@ def _cookie(name: str, expires: float | None) -> SimpleNamespace:
     return SimpleNamespace(name=name, expires=expires)
 
 
-def test_earliest_relevant_expiry_picks_soonest_of_two_cookies() -> None:
-    later = datetime.datetime(2024, 2, 11, tzinfo=datetime.timezone.utc).timestamp()
-    sooner = datetime.datetime(2024, 1, 12, tzinfo=datetime.timezone.utc).timestamp()
+def test_earliest_relevant_expiry_ignores_kb_cookie() -> None:
+    # X_APPLE_WEB_KB-* lifetime is unrelated to session validity (it can be minutes
+    # after login); only X-APPLE-WEBAUTH-USER counts.
+    user = datetime.datetime(2024, 2, 11, tzinfo=datetime.timezone.utc).timestamp()
+    kb = datetime.datetime(2024, 1, 12, tzinfo=datetime.timezone.utc).timestamp()
     cookies = [
-        _cookie("X_APPLE_WEB_KB-ONHCNAXFAIPPFDMR5UZVNO6NIMY", later),
-        _cookie("X-APPLE-WEBAUTH-USER", sooner),
+        _cookie("X_APPLE_WEB_KB-ONHCNAXFAIPPFDMR5UZVNO6NIMY", kb),
+        _cookie("X-APPLE-WEBAUTH-USER", user),
         _cookie("X-APPLE-WEBAUTH-LOGIN", None),
     ]
 
     result = earliest_relevant_expiry(cookies)
 
-    assert result == datetime.datetime.fromtimestamp(sooner, tz=datetime.timezone.utc)
+    assert result == datetime.datetime.fromtimestamp(user, tz=datetime.timezone.utc)
 
 
 def test_earliest_relevant_expiry_ignores_unrelated_cookies() -> None:

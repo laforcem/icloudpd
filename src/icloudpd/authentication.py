@@ -9,7 +9,12 @@ from typing import Any, Callable, Dict, List, Mapping, Tuple
 from icloudpd.mfa_provider import MFAProvider
 from icloudpd.status import Status, StatusExchange
 from pyicloud_ipd.base import PyiCloudService
-from pyicloud_ipd.exceptions import PyiCloudFailedMFAException
+from pyicloud_ipd.exceptions import PyiCloudFailedMFAException, PyiCloudMFATimeoutException
+
+# Upper bound on how long a single account may hold up the whole run waiting for a
+# human to start 2FA and enter a code. Apple's auth session goes stale well before this,
+# so a late tap is handled by re-logging in (see _trigger_push_with_relogin).
+MFA_WAIT_TIMEOUT_SECONDS = 6 * 60 * 60
 
 
 def prompt_int_range(message: str, default: str, min_val: int, max_val: int) -> int:
@@ -107,7 +112,24 @@ def authenticator(
         logger.info("Two-factor authentication is required (2fa)")
         notificator()
         if mfa_provider == MFAProvider.WEBUI:
-            request_2fa_web(icloud, logger, status_exchange, notify_mfa_accepted, notify_mfa_rejected)
+
+            def relogin() -> None:
+                # Don't go through the configured providers: the web UI one would
+                # try to move the status machine while we're mid-MFA. We already
+                # hold the password the initial login just used.
+                if not valid_password:
+                    raise PyiCloudFailedMFAException("No password available to log in again")
+                icloud.password_provider = lambda: valid_password[0]
+                icloud.authenticate(force_refresh=True)
+
+            request_2fa_web(
+                icloud,
+                logger,
+                status_exchange,
+                notify_mfa_accepted,
+                notify_mfa_rejected,
+                relogin,
+            )
         else:
             request_2fa(icloud, logger)
 
@@ -249,25 +271,63 @@ def request_2fa(icloud: PyiCloudService, logger: logging.Logger) -> None:
     )
 
 
+def _trigger_push_with_relogin(
+    icloud: PyiCloudService, logger: logging.Logger, relogin: Callable[[], None] | None
+) -> bool:
+    """Ask Apple to push a 2FA code; on failure, re-login for a fresh auth session and retry once.
+
+    The auth session (scnt / session id) from the initial login goes stale while we
+    wait for a human to tap Start 2FA, and Apple then answers the push request with 403.
+    """
+    if icloud.trigger_push_notification():
+        return True
+    if relogin is None:
+        return False
+    logger.info("2FA push request failed; logging in again for a fresh auth session")
+    try:
+        relogin()
+    except Exception as ex:  # best-effort: report the original failure to the user instead
+        logger.warning("Re-login before 2FA push failed: %s", ex)
+        return False
+    return icloud.trigger_push_notification()
+
+
+def _wait_while_status(
+    status_exchange: StatusExchange, status: Status, deadline: float
+) -> None:
+    while status_exchange.get_status() == status:
+        if time.monotonic() >= deadline:
+            raise PyiCloudMFATimeoutException(
+                "Timed out waiting for two-factor authentication; skipping this account for now"
+            )
+        time.sleep(0.01)
+
+
 def request_2fa_web(
     icloud: PyiCloudService,
     logger: logging.Logger,
     status_exchange: StatusExchange,
     notify_mfa_accepted: Callable[[], None],
     notify_mfa_rejected: Callable[[str], None],
+    relogin: Callable[[], None] | None = None,
+    timeout_seconds: float = MFA_WAIT_TIMEOUT_SECONDS,
 ) -> None:
     """Request two-factor authentication through Webui."""
+    deadline = time.monotonic() + timeout_seconds
     if not status_exchange.replace_status(Status.IDLE, Status.AWAITING_MFA_TRIGGER):
         raise PyiCloudFailedMFAException(
             f"Expected IDLE, but got {status_exchange.get_status()}"
         )
 
     while True:
-        # Tight poll (unlike the 1s poll in base.py's password-wait loop) so an
-        # HTTP-driven trigger (e.g. a Telegram bot tapping /trigger-push) doesn't
-        # add up to a second of visible latency before the push fires.
-        while status_exchange.get_status() == Status.AWAITING_MFA_TRIGGER:
-            time.sleep(0.01)
+        try:
+            # Tight poll (unlike the 1s poll in base.py's password-wait loop) so an
+            # HTTP-driven trigger (e.g. a Telegram bot tapping /trigger-push) doesn't
+            # add up to a second of visible latency before the push fires.
+            _wait_while_status(status_exchange, Status.AWAITING_MFA_TRIGGER, deadline)
+        except PyiCloudMFATimeoutException:
+            status_exchange.replace_status(Status.AWAITING_MFA_TRIGGER, Status.IDLE)
+            raise
 
         # A caller fast enough to submit a code between our trigger_mfa() and
         # our next check (unrealistic for a human/bot round-trip, but possible
@@ -279,16 +339,28 @@ def request_2fa_web(
 
         # Trigger push notification to trusted devices now that it's been asked for.
         # Apple's auth flow (2026+) requires a PUT to /verify/trusteddevice/securitycode
-        # to initiate code delivery. Failure is non-fatal — the user can still enter
-        # a code if it arrives via another path.
-        if not icloud.trigger_push_notification():
-            logger.debug("Failed to trigger 2FA push notification, continuing anyway")
-        else:
+        # to initiate code delivery.
+        if _trigger_push_with_relogin(icloud, logger, relogin):
             logger.debug("2FA push notification triggered")
+        else:
+            error = (
+                "Apple did not send a verification code. Tap Start 2FA to try again."
+            )
+            logger.warning("Failed to trigger 2FA push notification")
+            # Same ordering as the rejected-code path below: notify, then flip status.
+            # If a code was already submitted via another path, fail_trigger() returns
+            # False and we fall through to validate it.
+            if status_exchange.get_status() == Status.AWAITING_MFA_CODE:
+                notify_mfa_rejected(error)
+                if status_exchange.fail_trigger(error):
+                    continue
 
         # wait for a code to be submitted
-        while status_exchange.get_status() == Status.AWAITING_MFA_CODE:
-            time.sleep(0.01)
+        try:
+            _wait_while_status(status_exchange, Status.AWAITING_MFA_CODE, deadline)
+        except PyiCloudMFATimeoutException:
+            status_exchange.replace_status(Status.AWAITING_MFA_CODE, Status.IDLE)
+            raise
 
         if not status_exchange.replace_status(Status.SUBMITTED_MFA_CODE, Status.VALIDATING_MFA_CODE):
             raise PyiCloudFailedMFAException("Failed to change status")

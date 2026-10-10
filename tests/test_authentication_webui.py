@@ -201,3 +201,94 @@ def test_failed_code_notifies_before_flipping_status_back() -> None:
     wait_for_status(status_exchange, Status.AWAITING_MFA_CODE)
     status_exchange.set_payload("123456")
     thread.join(timeout=2.0)
+
+
+def _run_thread(icloud: mock.Mock, status_exchange: StatusExchange, **kwargs: object) -> threading.Thread:
+    errors: List[str] = []
+
+    def target() -> None:
+        try:
+            request_2fa_web(
+                icloud,
+                setup_logger(),
+                status_exchange,
+                lambda: None,
+                errors.append,
+                **kwargs,  # type: ignore[arg-type]
+            )
+        except Exception as ex:
+            errors.append(f"EXC:{type(ex).__name__}")
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.errors = errors  # type: ignore[attr-defined]
+    thread.start()
+    return thread
+
+
+def test_failed_push_relogs_in_and_retries_once() -> None:
+    status_exchange = StatusExchange()
+    icloud = make_icloud([True])
+    icloud.trigger_push_notification.side_effect = [False, True]
+    relogin = mock.Mock()
+
+    thread = _run_thread(icloud, status_exchange, relogin=relogin)
+    wait_for_status(status_exchange, Status.AWAITING_MFA_TRIGGER)
+    status_exchange.trigger_mfa()
+    wait_for_status(status_exchange, Status.AWAITING_MFA_CODE)
+    time.sleep(0.05)
+
+    relogin.assert_called_once()
+    assert icloud.trigger_push_notification.call_count == 2
+    assert status_exchange.get_status() == Status.AWAITING_MFA_CODE  # still waiting for a code
+
+    status_exchange.set_payload("123456")
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+
+
+def test_push_failure_after_relogin_reports_and_returns_to_trigger() -> None:
+    status_exchange = StatusExchange()
+    icloud = make_icloud([True])
+    icloud.trigger_push_notification.return_value = False
+
+    # short timeout so the loop thread ends (and stops polling) before the test returns
+    thread = _run_thread(icloud, status_exchange, relogin=mock.Mock(), timeout_seconds=1.0)
+    wait_for_status(status_exchange, Status.AWAITING_MFA_TRIGGER)
+    status_exchange.trigger_mfa()
+    deadline = time.monotonic() + 2
+    while not thread.errors and time.monotonic() < deadline:  # type: ignore[attr-defined]
+        time.sleep(0.01)
+
+    assert len(thread.errors) == 1  # type: ignore[attr-defined]
+    assert "Start 2FA" in thread.errors[0]  # type: ignore[attr-defined]
+    wait_for_status(status_exchange, Status.AWAITING_MFA_TRIGGER)
+    assert status_exchange.get_error() is not None
+
+    # a fresh trigger is accepted and the loop is not dead
+    assert status_exchange.trigger_mfa() is True
+    thread.join(timeout=3.0)
+    assert not thread.is_alive()
+
+
+def test_times_out_waiting_for_trigger_and_resets_status() -> None:
+    status_exchange = StatusExchange()
+    icloud = make_icloud([True])
+
+    thread = _run_thread(icloud, status_exchange, timeout_seconds=0.2)
+    thread.join(timeout=2.0)
+
+    assert thread.errors == ["EXC:PyiCloudMFATimeoutException"]  # type: ignore[attr-defined]
+    assert status_exchange.get_status() == Status.IDLE
+
+
+def test_times_out_waiting_for_code_and_resets_status() -> None:
+    status_exchange = StatusExchange()
+    icloud = make_icloud([True])
+
+    thread = _run_thread(icloud, status_exchange, timeout_seconds=0.3)
+    wait_for_status(status_exchange, Status.AWAITING_MFA_TRIGGER)
+    status_exchange.trigger_mfa()
+    thread.join(timeout=2.0)
+
+    assert thread.errors == ["EXC:PyiCloudMFATimeoutException"]  # type: ignore[attr-defined]
+    assert status_exchange.get_status() == Status.IDLE
