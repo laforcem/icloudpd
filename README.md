@@ -57,6 +57,6 @@ If you skip the copy, icloudpd logs a warning on startup that points at the old 
 
 If the mount drops, `directory` becomes an empty local folder, and icloudpd would happily download into your host's own disk. With `require_mount_marker: true` (CLI: `--require-mount-marker`), icloudpd checks that the file `<directory>/.mounted` exists before each run, and skips that user if it doesn't. Create the marker once, on the mounted library: `touch /data/you/.mounted`.
 
-When the marker is missing, icloudpd logs an error, writes nothing under `directory`, and in watch mode tries again on the next cycle. Without watch mode it exits non-zero. The check is skipped for `--auth-only` and the list commands, which don't touch the library.
+When the marker is missing, icloudpd logs an error, writes nothing under `directory`, and in watch mode tries again on the next cycle. Without watch mode it moves on to the next user, then exits non-zero at the end. The check is skipped for `--auth-only` and the list commands, which don't touch the library.
 
 Alerts go through your notification script (or the bundled Telegram bot): one `library_mount_missing` alert the first time the mount goes missing, and one `library_mount_restored` alert when it returns. With the Telegram bot, the missing-mount alert has a **Check again now** button that ends the current watch-mode wait early, so you can remount and re-check without waiting out the interval.

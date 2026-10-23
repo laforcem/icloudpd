@@ -268,3 +268,52 @@ def test_marker_returns_next_run_proceeds(tmp_path: Path) -> None:
     assert run.downloaded()
     assert _types(first_events, *_GUARD_EVENTS) == ["library_mount_missing"]
     assert _types(second_events, *_GUARD_EVENTS) == ["library_mount_restored"]
+
+
+# --- single-run mode skips a user and carries on ------------------------------
+
+
+def _users(*names: str) -> tuple[Any, list[Any]]:
+    import dataclasses
+
+    from icloudpd.cli import parse
+
+    global_config, users = parse(["--directory", "abc", "--username", "u1"])
+    return global_config, [dataclasses.replace(users[0], username=n) for n in names]
+
+
+def _process(results: list[int]) -> tuple[int, list[str]]:
+    from icloudpd import base
+    from icloudpd.status import StatusExchange
+
+    global_config, users = _users(*[f"u{i}@icloud.com" for i in range(len(results))])
+    seen: list[str] = []
+    outcomes = iter(results)
+
+    def fake_core(_logger: Any, _status: Any, _global: Any, user: Any, *_rest: Any) -> int:
+        seen.append(user.username)
+        return next(outcomes)
+
+    with patch("icloudpd.base.core_single_run", side_effect=fake_core):
+        code = base._process_all_users_once(global_config, users, LOGGER, StatusExchange())
+    return code, seen
+
+
+def test_single_run_skipped_user_does_not_stop_later_users_but_exit_stays_nonzero() -> None:
+    from icloudpd.base import USER_SKIPPED
+
+    code, seen = _process([USER_SKIPPED, 0])
+    assert seen == ["u0@icloud.com", "u1@icloud.com"]
+    assert code == 1
+
+
+def test_single_run_ordinary_failure_still_stops_the_run() -> None:
+    code, seen = _process([1, 0])
+    assert seen == ["u0@icloud.com"]
+    assert code == 1
+
+
+def test_single_run_all_users_fine_exits_zero() -> None:
+    code, seen = _process([0, 0])
+    assert seen == ["u0@icloud.com", "u1@icloud.com"]
+    assert code == 0

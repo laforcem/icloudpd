@@ -260,6 +260,12 @@ def create_logger(config: GlobalConfig) -> logging.Logger:
     return logger
 
 
+# Returned by core_single_run when it deliberately skipped a user (library not
+# mounted, state_directory unusable). Unlike other failures, single-run mode
+# carries on with the remaining users, then still exits non-zero.
+USER_SKIPPED = 3
+
+
 def _has_shared_state_directory(logger: logging.Logger, user_configs: Sequence[UserConfig]) -> bool:
     """Log an error and return True if two users would share one state.db.
 
@@ -380,6 +386,7 @@ def _process_all_users_once(
     shared_status_exchange.set_global_config(global_config)
     shared_status_exchange.set_user_configs(user_configs)
 
+    any_skipped = False
     for user_config in user_configs:
         with logging_redirect_tqdm():
             # Use shared status exchange instead of creating new ones per user
@@ -520,7 +527,10 @@ def _process_all_users_once(
             )
 
             # If any user config fails and we're not in watch mode, return the error code
-            if result != 0:
+            if result == USER_SKIPPED and not global_config.watch_with_interval:
+                logger.error(f"Skipped user {user_config.username}, continuing with next user...")
+                any_skipped = True
+            elif result != 0:
                 if not global_config.watch_with_interval:
                     return result
                 else:
@@ -529,7 +539,7 @@ def _process_all_users_once(
                         f"Error processing user {user_config.username}, continuing with next user..."
                     )
 
-    return 0
+    return 1 if any_skipped else 0
 
 
 def notificator_builder(
@@ -1001,7 +1011,7 @@ def core_single_run(
             str(user_config.notification_script) if user_config.notification_script else None,
         )
     ):
-        return 1
+        return USER_SKIPPED
 
     skip_bar = not os.environ.get("FORCE_TQDM") and (
         global_config.only_print_filenames
@@ -1109,7 +1119,7 @@ def core_single_run(
                             "refusing to run without it.",
                             state_directory,
                         )
-                        return 1
+                        return USER_SKIPPED
 
                     try:
                         if user_config.skip_photos or user_config.skip_videos:
