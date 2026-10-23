@@ -101,3 +101,19 @@ def test_password_requires_manual_entry_defaults_true_on_connection_error() -> N
     client = IcloudpdClient("http://icloudpd:8080")
 
     assert client.password_requires_manual_entry() is True
+
+
+@responses.activate
+def test_resume_posts_to_resume_and_returns_true_on_200() -> None:
+    responses.add(responses.POST, "http://icloudpd:8080/resume", body="Ok", status=200)
+    client = IcloudpdClient("http://icloudpd:8080")
+
+    assert client.resume() is True
+
+
+@responses.activate
+def test_resume_returns_false_on_other_status() -> None:
+    responses.add(responses.POST, "http://icloudpd:8080/resume", status=500)
+    client = IcloudpdClient("http://icloudpd:8080")
+
+    assert client.resume() is False

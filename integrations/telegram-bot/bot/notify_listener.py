@@ -15,6 +15,8 @@ def build_notify_app(
     on_session_expiring_soon: NotifyHandler,
     on_mfa_accepted: NotifyHandler,
     on_mfa_rejected: NotifyHandler,
+    on_library_mount_missing: NotifyHandler,
+    on_library_mount_restored: NotifyHandler,
 ) -> web.Application:
     app = web.Application()
 
@@ -29,6 +31,10 @@ def build_notify_app(
             await on_mfa_accepted(event)
         elif event_type == "mfa_rejected":
             await on_mfa_rejected(event)
+        elif event_type == "library_mount_missing":
+            await on_library_mount_missing(event)
+        elif event_type == "library_mount_restored":
+            await on_library_mount_restored(event)
         else:
             logger.debug("Ignoring unhandled event_type=%s", event_type)
         return web.Response(status=204)
