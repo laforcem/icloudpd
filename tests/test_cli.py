@@ -209,6 +209,8 @@ class CliTestCase(TestCase):
                             username="u1",
                             auth_only=False,
                             cookie_directory="~/.pyicloud",
+                            state_directory=None,
+                            require_mount_marker=False,
                             password=None,
                             password_file=None,
                             sizes=[AssetVersionSize.ORIGINAL],
@@ -242,6 +244,8 @@ class CliTestCase(TestCase):
                             directory="def",
                             auth_only=False,
                             cookie_directory="~/.pyicloud",
+                            state_directory=None,
+                            require_mount_marker=False,
                             username="u2",
                             password=None,
                             password_file=None,
@@ -314,6 +318,8 @@ class CliTestCase(TestCase):
                             username="u1",
                             auth_only=False,
                             cookie_directory="~/.pyicloud",
+                            state_directory=None,
+                            require_mount_marker=False,
                             password=None,
                             password_file=None,
                             sizes=[AssetVersionSize.ORIGINAL],
@@ -815,3 +821,47 @@ def test_cli_reports_clear_error_when_run_with_configs_raises_config_file_error(
     assert exit_code == 2
     captured = capsys.readouterr()
     assert "could not be read" in captured.out or "could not be read" in captured.err
+
+
+def _first_user(args: Sequence[str]) -> UserConfig:
+    _global, users = parse(list(args))
+    return users[0]
+
+
+def test_state_directory_flag_maps_to_config() -> None:
+    user = _first_user(["--directory", "abc", "--username", "u1", "--state-directory", "/state/a"])
+    assert user.state_directory == "/state/a"
+
+
+def test_state_directory_defaults_to_none() -> None:
+    assert _first_user(["--directory", "abc", "--username", "u1"]).state_directory is None
+
+
+def test_require_mount_marker_flag_maps_to_config() -> None:
+    on = _first_user(["--directory", "abc", "--username", "u1", "--require-mount-marker"])
+    off = _first_user(["--directory", "abc", "--username", "u1"])
+    assert on.require_mount_marker is True
+    assert off.require_mount_marker is False
+
+
+def _two_users_sharing(state_a: str, state_b: str) -> tuple[GlobalConfig, list[UserConfig]]:
+    import dataclasses
+
+    global_config, users = parse(["--directory", "abc", "--username", "u1"])
+    first = dataclasses.replace(users[0], state_directory=state_a)
+    second = dataclasses.replace(users[0], username="u2", state_directory=state_b)
+    return global_config, [first, second]
+
+
+def test_run_with_configs_rejects_users_sharing_a_state_directory() -> None:
+    from icloudpd.base import run_with_configs
+
+    global_config, users = _two_users_sharing("/state/shared", "/state/shared")
+    assert run_with_configs(global_config, users) == 2
+
+
+def test_run_with_configs_treats_equivalent_state_paths_as_shared() -> None:
+    from icloudpd.base import run_with_configs
+
+    global_config, users = _two_users_sharing("/state/shared", "/state/other/../shared/")
+    assert run_with_configs(global_config, users) == 2

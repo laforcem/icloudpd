@@ -67,6 +67,30 @@ def force_reauth_keyboard(username: str) -> InlineKeyboardMarkup:
     )
 
 
+def library_mount_missing_text(username: str, message: str) -> str:
+    return f"\U0001F6AB {username}: {message} Remount the library, then tap below to re-check."
+
+
+def library_mount_restored_text(username: str, message: str) -> str:
+    return f"✅ {username}: {message}"
+
+
+def retry_mount_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Check again now", callback_data="retry_mount")]
+        ]
+    )
+
+
+def retry_mount_requested_text() -> str:
+    return "Checking again now. You'll get a message if the library is back."
+
+
+def retry_mount_failed_text() -> str:
+    return "Couldn't reach icloudpd to re-check. Try again in a moment."
+
+
 def force_reauth_requested_text(username: str) -> str:
     return f"Refreshing session for {username}. This may take a few seconds."
 

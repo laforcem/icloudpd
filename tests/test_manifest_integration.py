@@ -7,7 +7,7 @@ from unittest import TestCase
 
 import pytest
 
-from tests.helpers import path_from_project_root, run_icloudpd_test
+from tests.helpers import calc_data_dir, path_from_project_root, run_icloudpd_test
 
 
 class ManifestIntegrationTestCase(TestCase):
@@ -210,3 +210,74 @@ class ManifestIntegrationTestCase(TestCase):
         # but must appear as two distinct manifest rows.
         matching = [paths for paths in by_record.values() if len(paths) >= 2]
         self.assertTrue(matching, f"expected one recordName with 2+ local paths, got: {by_record}")
+
+    def test_state_directory_flag_puts_manifest_outside_library(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+        state_dir = os.path.join(base_dir, "state")
+
+        data_dir, result = run_icloudpd_test(
+            self.assertEqual,
+            self.root_path,
+            base_dir,
+            "listing_photos.yml",
+            [("2018/07/30", "IMG_7408.JPG", 1151066), ("2018/07/30", "IMG_7407.JPG", 656257)],
+            [("2018/07/31", "IMG_7409.JPG")],
+            [
+                "--username",
+                "jdoe@gmail.com",
+                "--password",
+                "password1",
+                "--recent",
+                "5",
+                "--skip-videos",
+                "--skip-live-photos",
+                "--no-progress-bar",
+                "--threads-num",
+                "1",
+                "--state-directory",
+                state_dir,
+            ],
+        )
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertFalse(os.path.exists(os.path.join(data_dir, ".icloudpd")))
+        connection = sqlite3.connect(os.path.join(state_dir, "state.db"))
+        try:
+            count = connection.execute("SELECT COUNT(*) FROM downloaded_assets").fetchone()[0]
+        finally:
+            connection.close()
+        self.assertGreaterEqual(count, 3)
+
+    def test_unwritable_state_directory_fails_the_run(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+        blocker = os.path.join(calc_data_dir(base_dir), "blockdir", "blocker.txt")
+
+        _data_dir, result = run_icloudpd_test(
+            self.assertEqual,
+            self.root_path,
+            base_dir,
+            "listing_photos.yml",
+            [
+                ("2018/07/30", "IMG_7408.JPG", 1151066),
+                ("2018/07/30", "IMG_7407.JPG", 656257),
+                ("blockdir", "blocker.txt", 1),
+            ],
+            [],
+            [
+                "--username",
+                "jdoe@gmail.com",
+                "--password",
+                "password1",
+                "--recent",
+                "5",
+                "--skip-videos",
+                "--skip-live-photos",
+                "--no-progress-bar",
+                "--threads-num",
+                "1",
+                "--state-directory",
+                os.path.join(blocker, "state"),
+            ],
+        )
+
+        self.assertEqual(result.exit_code, 1)

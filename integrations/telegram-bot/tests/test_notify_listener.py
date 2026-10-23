@@ -20,7 +20,9 @@ async def test_session_expiring_soon_event_invokes_its_own_handler() -> None:
     async def on_session_expiring_soon(event: dict[str, Any]) -> None:
         expiring.append(event)
 
-    app = build_notify_app(on_session_expired, on_session_expiring_soon, _noop, _noop)
+    app = build_notify_app(
+        on_session_expired, on_session_expiring_soon, _noop, _noop, _noop, _noop
+    )
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -46,7 +48,7 @@ async def test_session_expired_event_invokes_handler() -> None:
     async def on_session_expired(event: dict[str, Any]) -> None:
         received.append(event)
 
-    app = build_notify_app(on_session_expired, _noop, _noop, _noop)
+    app = build_notify_app(on_session_expired, _noop, _noop, _noop, _noop, _noop)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -78,7 +80,7 @@ async def test_unhandled_event_type_does_not_invoke_handler() -> None:
     async def on_session_expired(event: dict[str, Any]) -> None:
         received.append(event)
 
-    app = build_notify_app(on_session_expired, _noop, _noop, _noop)
+    app = build_notify_app(on_session_expired, _noop, _noop, _noop, _noop, _noop)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -106,7 +108,7 @@ async def test_mfa_accepted_event_invokes_its_own_handler() -> None:
     async def on_mfa_rejected(event: dict[str, Any]) -> None:
         rejected.append(event)
 
-    app = build_notify_app(_noop, _noop, on_mfa_accepted, on_mfa_rejected)
+    app = build_notify_app(_noop, _noop, on_mfa_accepted, on_mfa_rejected, _noop, _noop)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -136,7 +138,7 @@ async def test_mfa_rejected_event_invokes_its_own_handler() -> None:
     async def on_mfa_rejected(event: dict[str, Any]) -> None:
         rejected.append(event)
 
-    app = build_notify_app(_noop, _noop, on_mfa_accepted, on_mfa_rejected)
+    app = build_notify_app(_noop, _noop, on_mfa_accepted, on_mfa_rejected, _noop, _noop)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -154,3 +156,54 @@ async def test_mfa_rejected_event_invokes_its_own_handler() -> None:
     assert len(rejected) == 1
     assert rejected[0]["event_type"] == "mfa_rejected"
     assert rejected[0]["data"] == {"error": "bad code"}
+
+
+async def _post_event(app: Any, event_type: str) -> int:
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post(
+            "/notify",
+            json={
+                "event_type": event_type,
+                "timestamp": "2026-07-15T00:00:00+00:00",
+                "username": "jdoe@icloud.com",
+                "message": "library not mounted",
+                "data": {"directory": "/data/jdoe"},
+            },
+        )
+        return response.status
+
+
+@pytest.mark.asyncio
+async def test_library_mount_missing_event_invokes_its_own_handler() -> None:
+    missing: list[dict[str, Any]] = []
+    restored: list[dict[str, Any]] = []
+
+    async def on_missing(event: dict[str, Any]) -> None:
+        missing.append(event)
+
+    async def on_restored(event: dict[str, Any]) -> None:
+        restored.append(event)
+
+    app = build_notify_app(_noop, _noop, _noop, _noop, on_missing, on_restored)
+
+    assert await _post_event(app, "library_mount_missing") == 204
+    assert [e["event_type"] for e in missing] == ["library_mount_missing"]
+    assert restored == []
+
+
+@pytest.mark.asyncio
+async def test_library_mount_restored_event_invokes_its_own_handler() -> None:
+    missing: list[dict[str, Any]] = []
+    restored: list[dict[str, Any]] = []
+
+    async def on_missing(event: dict[str, Any]) -> None:
+        missing.append(event)
+
+    async def on_restored(event: dict[str, Any]) -> None:
+        restored.append(event)
+
+    app = build_notify_app(_noop, _noop, _noop, _noop, on_missing, on_restored)
+
+    assert await _post_event(app, "library_mount_restored") == 204
+    assert [e["event_type"] for e in restored] == ["library_mount_restored"]
+    assert missing == []

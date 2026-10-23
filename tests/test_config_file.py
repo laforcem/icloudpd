@@ -232,3 +232,21 @@ users:
     )
     result = load_config_file(path)
     assert result.users[0]["skip_videos"] is False
+
+
+def test_require_mount_marker_accepts_bool_and_state_directory_accepts_string(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = _write(
+        tmp_path,
+        """
+users:
+  - username: you@icloud.com
+    directory: /data
+    state_directory: /state/a
+    require_mount_marker: true
+""",
+    )
+    result = load_config_file(path)
+    assert result.users[0]["state_directory"] == "/state/a"
+    assert result.users[0]["require_mount_marker"] is True

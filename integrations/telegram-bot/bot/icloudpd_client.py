@@ -23,6 +23,10 @@ class IcloudpdClient:
         )
         return response.status_code == 204
 
+    def resume(self) -> bool:
+        response = requests.post(f"{self._base_url}/resume", timeout=self._timeout)
+        return response.status_code == 200
+
     def submit_code(self, code: str) -> bool:
         response = requests.post(
             f"{self._base_url}/code", data={"code": code}, timeout=self._timeout

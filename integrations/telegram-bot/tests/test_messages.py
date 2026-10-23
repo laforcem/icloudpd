@@ -7,7 +7,12 @@ from bot.messages import (
     force_reauth_keyboard,
     force_reauth_not_found_text,
     force_reauth_requested_text,
+    library_mount_missing_text,
+    library_mount_restored_text,
     manual_password_entry_text,
+    retry_mount_failed_text,
+    retry_mount_keyboard,
+    retry_mount_requested_text,
     session_expired_text,
     session_expiring_soon_text,
     start_2fa_keyboard,
@@ -94,3 +99,38 @@ def test_webui_link_keyboard_embeds_url() -> None:
 
     assert keyboard.inline_keyboard[0][0].text == "Open WebUI"
     assert keyboard.inline_keyboard[0][0].url == "http://vm101.lan:2011"
+
+
+def test_library_mount_missing_text_includes_username_and_message() -> None:
+    text = library_mount_missing_text("jdoe@icloud.com", "library not mounted")
+
+    assert "jdoe@icloud.com" in text
+    assert "library not mounted" in text
+    assert text.startswith("\U0001F6AB")
+
+
+def test_library_mount_restored_text_includes_username_and_message() -> None:
+    text = library_mount_restored_text("jdoe@icloud.com", "mounted again")
+
+    assert "jdoe@icloud.com" in text
+    assert "mounted again" in text
+    assert text.startswith("✅")
+
+
+def test_retry_mount_keyboard_has_one_button_with_retry_mount_callback() -> None:
+    keyboard = retry_mount_keyboard()
+
+    assert len(keyboard.inline_keyboard) == 1
+    assert len(keyboard.inline_keyboard[0]) == 1
+    assert keyboard.inline_keyboard[0][0].callback_data == "retry_mount"
+
+
+def test_retry_mount_requested_text_is_non_empty() -> None:
+    assert retry_mount_requested_text()
+
+
+def test_retry_mount_failed_text_does_not_mention_codes() -> None:
+    text = retry_mount_failed_text()
+
+    assert text
+    assert "code" not in text.lower()

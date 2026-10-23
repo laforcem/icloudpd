@@ -17,6 +17,8 @@ from bot.messages import (
     force_reauth_not_found_text,
     force_reauth_requested_text,
     push_not_pending_text,
+    retry_mount_failed_text,
+    retry_mount_requested_text,
 )
 from bot.mfa_waiter import MfaResultWaiter
 from bot.state import ChatState
@@ -84,6 +86,30 @@ async def handle_force_reauth(
 
     await callback.answer()
     await callback.message.answer(force_reauth_requested_text(username))
+
+
+async def handle_retry_mount(
+    callback: CallbackQuery,
+    client: IcloudpdClient,
+    allowed_chat_ids: frozenset[int],
+) -> None:
+    chat_id = callback.message.chat.id
+    if chat_id not in allowed_chat_ids:
+        await callback.answer()
+        return
+
+    try:
+        resumed = await asyncio.to_thread(client.resume)
+    except requests.exceptions.RequestException:
+        await callback.answer(retry_mount_failed_text(), show_alert=True)
+        return
+
+    if not resumed:
+        await callback.answer(retry_mount_failed_text(), show_alert=True)
+        return
+
+    await callback.answer()
+    await callback.message.answer(retry_mount_requested_text())
 
 
 async def handle_message(
@@ -156,6 +182,10 @@ def build_router(
     @router.callback_query(F.data == "exit_2fa")
     async def _exit(callback: CallbackQuery) -> None:
         await handle_exit(callback, state, allowed_chat_ids)
+
+    @router.callback_query(F.data == "retry_mount")
+    async def _retry_mount(callback: CallbackQuery) -> None:
+        await handle_retry_mount(callback, client, allowed_chat_ids)
 
     @router.callback_query(F.data.startswith("force_reauth:"))
     async def _force_reauth(callback: CallbackQuery) -> None:

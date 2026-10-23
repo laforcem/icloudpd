@@ -4,7 +4,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 import requests
-from bot.handlers import handle_exit, handle_force_reauth, handle_message, handle_start_or_retry
+from bot.handlers import (
+    handle_exit,
+    handle_force_reauth,
+    handle_message,
+    handle_retry_mount,
+    handle_start_or_retry,
+)
+from bot.messages import retry_mount_failed_text
 from bot.mfa_waiter import MfaResultWaiter
 from bot.state import ChatState
 
@@ -268,3 +275,65 @@ async def test_force_reauth_alerts_on_connection_error() -> None:
 
     callback.answer.assert_awaited_once()
     callback.message.answer.assert_not_called()
+
+
+class ResumeClient(FakeClient):
+    def __init__(self, resume_result: bool = True) -> None:
+        super().__init__()
+        self.resume_result = resume_result
+        self.resume_calls = 0
+
+    def resume(self) -> bool:
+        self.resume_calls += 1
+        return self.resume_result
+
+
+class ResumeRaisesClient(FakeClient):
+    def resume(self) -> bool:
+        raise requests.exceptions.ConnectionError("Remote end closed connection")
+
+
+@pytest.mark.asyncio
+async def test_retry_mount_ignores_disallowed_chat() -> None:
+    client = ResumeClient()
+    callback = make_callback(chat_id=1, data="retry_mount")
+
+    await handle_retry_mount(callback, client, allowed_chat_ids=frozenset({2}))
+
+    callback.answer.assert_awaited_once_with()
+    callback.message.answer.assert_not_called()
+    assert client.resume_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_retry_mount_calls_resume_and_confirms() -> None:
+    client = ResumeClient(resume_result=True)
+    callback = make_callback(chat_id=1, data="retry_mount")
+
+    await handle_retry_mount(callback, client, allowed_chat_ids=frozenset({1}))
+
+    assert client.resume_calls == 1
+    callback.message.answer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_retry_mount_alerts_when_resume_fails() -> None:
+    client = ResumeClient(resume_result=False)
+    callback = make_callback(chat_id=1, data="retry_mount")
+
+    await handle_retry_mount(callback, client, allowed_chat_ids=frozenset({1}))
+
+    callback.message.answer.assert_not_called()
+    assert callback.answer.await_args.args == (retry_mount_failed_text(),)
+    assert callback.answer.await_args.kwargs.get("show_alert") is True
+
+
+@pytest.mark.asyncio
+async def test_retry_mount_alerts_on_connection_error() -> None:
+    callback = make_callback(chat_id=1, data="retry_mount")
+
+    await handle_retry_mount(callback, ResumeRaisesClient(), allowed_chat_ids=frozenset({1}))
+
+    callback.message.answer.assert_not_called()
+    assert callback.answer.await_args.args == (retry_mount_failed_text(),)
+    assert callback.answer.await_args.kwargs.get("show_alert") is True

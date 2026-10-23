@@ -94,3 +94,26 @@ class NotifyTestCase(TestCase):
             notifications.notify(self.logger, "./notify.sh", self.event, timeout_s=2.5)
             _, kwargs = run_mock.call_args
             self.assertEqual(kwargs["timeout"], 2.5)
+
+
+    def test_notify_returns_true_when_no_script_configured(self) -> None:
+        self.assertTrue(notifications.notify(self.logger, None, self.event))
+
+    def test_notify_returns_true_on_success(self) -> None:
+        with patch("icloudpd.notifications.subprocess.run") as run_mock:
+            run_mock.return_value = MagicMock(returncode=0, stderr="")
+            self.assertTrue(notifications.notify(self.logger, "./notify.sh", self.event))
+
+    def test_notify_returns_false_on_nonzero_exit(self) -> None:
+        with patch("icloudpd.notifications.subprocess.run") as run_mock:
+            run_mock.return_value = MagicMock(returncode=1, stderr="boom")
+            self.assertFalse(notifications.notify(self.logger, "./notify.sh", self.event))
+
+    def test_notify_returns_false_on_missing_script_and_timeout(self) -> None:
+        with patch("icloudpd.notifications.subprocess.run", side_effect=OSError("nope")):
+            self.assertFalse(notifications.notify(self.logger, "./missing.sh", self.event))
+        with patch(
+            "icloudpd.notifications.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="./notify.sh", timeout=10.0),
+        ):
+            self.assertFalse(notifications.notify(self.logger, "./notify.sh", self.event))

@@ -72,6 +72,7 @@ _USER_BOOL_FIELDS = {
     "keep_unicode_in_filenames",
     "skip_photos",
     "notification_forwarder",
+    "require_mount_marker",
 }
 
 

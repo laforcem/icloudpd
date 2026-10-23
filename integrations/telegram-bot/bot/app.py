@@ -11,7 +11,10 @@ from bot.handlers import build_router
 from bot.icloudpd_client import IcloudpdClient
 from bot.messages import (
     force_reauth_keyboard,
+    library_mount_missing_text,
+    library_mount_restored_text,
     manual_password_entry_text,
+    retry_mount_keyboard,
     session_expired_text,
     session_expiring_soon_text,
     start_2fa_keyboard,
@@ -65,7 +68,26 @@ def build_application(
         data = event.get("data", {})
         waiter.resolve(success=False, error=data.get("error"), username=event.get("username"))
 
+    async def on_library_mount_missing(event: dict[str, Any]) -> None:
+        text = library_mount_missing_text(
+            event.get("username", "unknown account"), event.get("message", "")
+        )
+        for chat_id in config.allowed_chat_ids:
+            await bot.send_message(chat_id, text, reply_markup=retry_mount_keyboard())
+
+    async def on_library_mount_restored(event: dict[str, Any]) -> None:
+        text = library_mount_restored_text(
+            event.get("username", "unknown account"), event.get("message", "")
+        )
+        for chat_id in config.allowed_chat_ids:
+            await bot.send_message(chat_id, text)
+
     notify_app = build_notify_app(
-        on_session_expired, on_session_expiring_soon, on_mfa_accepted, on_mfa_rejected
+        on_session_expired,
+        on_session_expiring_soon,
+        on_mfa_accepted,
+        on_mfa_rejected,
+        on_library_mount_missing,
+        on_library_mount_restored,
     )
     return dispatcher, notify_app

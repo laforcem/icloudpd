@@ -37,7 +37,7 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from tzlocal import get_localzone
 
 from foundation.core import compose, identity, map_, partial_1_1
-from icloudpd import download, exif_datetime, manifest, notifications, session_expiry
+from icloudpd import download, exif_datetime, manifest, mount_guard, notifications, session_expiry
 from icloudpd.authentication import authenticator
 from icloudpd.autodelete import autodelete_photos
 from icloudpd.config import GlobalConfig, UserConfig
@@ -260,11 +260,45 @@ def create_logger(config: GlobalConfig) -> logging.Logger:
     return logger
 
 
+# Returned by core_single_run when it deliberately skipped a user (library not
+# mounted, state_directory unusable). Unlike other failures, single-run mode
+# carries on with the remaining users, then still exits non-zero.
+USER_SKIPPED = 3
+
+
+def _has_shared_state_directory(logger: logging.Logger, user_configs: Sequence[UserConfig]) -> bool:
+    """Log an error and return True if two users would share one state.db.
+
+    The manifest is one database per library; accounts sharing a state
+    directory would mix their records and hide each other's migration warning.
+    """
+    owners: Dict[str, str] = {}
+    shared = False
+    for user_config in user_configs:
+        if not user_config.state_directory:
+            continue
+        resolved = os.path.abspath(os.path.expanduser(user_config.state_directory))
+        if resolved in owners:
+            logger.error(
+                "state_directory %s is used by both %s and %s; give each user their own.",
+                resolved,
+                owners[resolved],
+                user_config.username,
+            )
+            shared = True
+        else:
+            owners[resolved] = user_config.username
+    return shared
+
+
 def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserConfig]) -> int:
     """Run the application with the new configuration system"""
 
     # Create shared logger
     logger = create_logger(global_config)
+
+    if _has_shared_state_directory(logger, user_configs):
+        return 2
 
     # Create shared status exchange for web server and progress tracking
     shared_status_exchange = StatusExchange()
@@ -352,6 +386,7 @@ def _process_all_users_once(
     shared_status_exchange.set_global_config(global_config)
     shared_status_exchange.set_user_configs(user_configs)
 
+    any_skipped = False
     for user_config in user_configs:
         with logging_redirect_tqdm():
             # Use shared status exchange instead of creating new ones per user
@@ -492,7 +527,10 @@ def _process_all_users_once(
             )
 
             # If any user config fails and we're not in watch mode, return the error code
-            if result != 0:
+            if result == USER_SKIPPED and not global_config.watch_with_interval:
+                logger.error(f"Skipped user {user_config.username}, continuing with next user...")
+                any_skipped = True
+            elif result != 0:
                 if not global_config.watch_with_interval:
                     return result
                 else:
@@ -501,7 +539,7 @@ def _process_all_users_once(
                         f"Error processing user {user_config.username}, continuing with next user..."
                     )
 
-    return 0
+    return 1 if any_skipped else 0
 
 
 def notificator_builder(
@@ -962,6 +1000,19 @@ def core_single_run(
 ) -> int:
     """Download all iCloud photos to a local directory for a single execution (no watch loop)"""
 
+    if (
+        user_config.require_mount_marker
+        and user_config.directory
+        and not (user_config.auth_only or user_config.list_albums or user_config.list_libraries)
+        and not mount_guard.check(
+            logger,
+            user_config.username,
+            os.path.normpath(user_config.directory),
+            str(user_config.notification_script) if user_config.notification_script else None,
+        )
+    ):
+        return USER_SKIPPED
+
     skip_bar = not os.environ.get("FORCE_TQDM") and (
         global_config.only_print_filenames
         or global_config.no_progress_bar
@@ -1048,11 +1099,27 @@ def core_single_run(
 
                     directory = os.path.normpath(user_config.directory)
 
+                    state_directory = (
+                        os.path.expanduser(os.path.normpath(user_config.state_directory))
+                        if user_config.state_directory
+                        else None
+                    )
                     manifest_handle = (
-                        manifest.open(logger, directory)
+                        manifest.open(logger, directory, state_directory)
                         if not global_config.only_print_filenames
                         else None
                     )
+                    if (
+                        state_directory is not None
+                        and manifest_handle is None
+                        and not global_config.only_print_filenames
+                    ):
+                        logger.error(
+                            "Could not open the asset manifest in state_directory %s; "
+                            "refusing to run without it.",
+                            state_directory,
+                        )
+                        return USER_SKIPPED
 
                     try:
                         if user_config.skip_photos or user_config.skip_videos:
