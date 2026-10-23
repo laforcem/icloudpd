@@ -209,6 +209,8 @@ class CliTestCase(TestCase):
                             username="u1",
                             auth_only=False,
                             cookie_directory="~/.pyicloud",
+                            state_directory=None,
+                            require_mount_marker=False,
                             password=None,
                             password_file=None,
                             sizes=[AssetVersionSize.ORIGINAL],
@@ -242,6 +244,8 @@ class CliTestCase(TestCase):
                             directory="def",
                             auth_only=False,
                             cookie_directory="~/.pyicloud",
+                            state_directory=None,
+                            require_mount_marker=False,
                             username="u2",
                             password=None,
                             password_file=None,
@@ -314,6 +318,8 @@ class CliTestCase(TestCase):
                             username="u1",
                             auth_only=False,
                             cookie_directory="~/.pyicloud",
+                            state_directory=None,
+                            require_mount_marker=False,
                             password=None,
                             password_file=None,
                             sizes=[AssetVersionSize.ORIGINAL],
@@ -815,3 +821,24 @@ def test_cli_reports_clear_error_when_run_with_configs_raises_config_file_error(
     assert exit_code == 2
     captured = capsys.readouterr()
     assert "could not be read" in captured.out or "could not be read" in captured.err
+
+
+def _first_user(args: Sequence[str]) -> UserConfig:
+    _global, users = parse(list(args))
+    return users[0]
+
+
+def test_state_directory_flag_maps_to_config() -> None:
+    user = _first_user(["--directory", "abc", "--username", "u1", "--state-directory", "/state/a"])
+    assert user.state_directory == "/state/a"
+
+
+def test_state_directory_defaults_to_none() -> None:
+    assert _first_user(["--directory", "abc", "--username", "u1"]).state_directory is None
+
+
+def test_require_mount_marker_flag_maps_to_config() -> None:
+    on = _first_user(["--directory", "abc", "--username", "u1", "--require-mount-marker"])
+    off = _first_user(["--directory", "abc", "--username", "u1"])
+    assert on.require_mount_marker is True
+    assert off.require_mount_marker is False

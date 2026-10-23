@@ -17,6 +17,8 @@ class _DefaultConfig:
     directory: str
     auth_only: bool
     cookie_directory: str
+    state_directory: str | None
+    require_mount_marker: bool
     sizes: Sequence[AssetVersionSize]
     live_photo_size: LivePhotoVersionSize
     recent: int | None

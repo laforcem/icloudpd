@@ -66,6 +66,17 @@ def add_options_for_user(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
         default=None,
     )
     cloned.add_argument(
+        "--state-directory",
+        help="Directory to store the asset manifest (state.db), e.g. on local disk when the library is on a network mount. Default: <directory>/.icloudpd",
+        default=None,
+    )
+    cloned.add_argument(
+        "--require-mount-marker",
+        help="Skip the run and send a notification if <directory>/.mounted is missing (protects against a dropped network mount). Default: don't check",
+        action="store_true",
+        default=None,
+    )
+    cloned.add_argument(
         "--size",
         help="Image size to download. `medium` and `thumb` will always be added as suffixes to filenames, `adjusted` and `alternative` only if conflicting, `original` never. If `adjusted` or `alternative` is specified and missing, then `original` is used. Default: original",
         choices=["original", "medium", "thumb", "adjusted", "alternative"],
@@ -502,6 +513,8 @@ def map_to_config(user_ns: argparse.Namespace) -> UserConfig:
         directory=get("directory"),
         auth_only=get("auth_only"),
         cookie_directory=get("cookie_directory"),
+        state_directory=get("state_directory"),
+        require_mount_marker=get("require_mount_marker"),
         sizes=list(map_(AssetVersionSize, foundation.unique_sequence(get("sizes")))),
         live_photo_size=LivePhotoVersionSize(get("live_photo_size")),
         recent=get("recent"),

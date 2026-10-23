@@ -168,6 +168,8 @@ def _user_config(username: str, cookie_directory: str) -> UserConfig:
         directory="/tmp/does-not-matter",
         auth_only=True,
         cookie_directory=cookie_directory,
+        state_directory=None,
+        require_mount_marker=False,
         sizes=[AssetVersionSize.ORIGINAL],
         live_photo_size=LivePhotoVersionSize.ORIGINAL,
         recent=None,
