@@ -37,7 +37,7 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from tzlocal import get_localzone
 
 from foundation.core import compose, identity, map_, partial_1_1
-from icloudpd import download, exif_datetime, manifest, notifications, session_expiry
+from icloudpd import download, exif_datetime, manifest, mount_guard, notifications, session_expiry
 from icloudpd.authentication import authenticator
 from icloudpd.autodelete import autodelete_photos
 from icloudpd.config import GlobalConfig, UserConfig
@@ -961,6 +961,19 @@ def core_single_run(
     lp_filename_generator: Callable[[str], str],
 ) -> int:
     """Download all iCloud photos to a local directory for a single execution (no watch loop)"""
+
+    if (
+        user_config.require_mount_marker
+        and user_config.directory
+        and not (user_config.auth_only or user_config.list_albums or user_config.list_libraries)
+        and not mount_guard.check(
+            logger,
+            user_config.username,
+            os.path.normpath(user_config.directory),
+            str(user_config.notification_script) if user_config.notification_script else None,
+        )
+    ):
+        return 1
 
     skip_bar = not os.environ.get("FORCE_TQDM") and (
         global_config.only_print_filenames

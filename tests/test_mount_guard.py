@@ -1,13 +1,16 @@
+import json
 import logging
 import os
+import shutil
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 from unittest.mock import patch
 
 import pytest
 
 from icloudpd import mount_guard
 from icloudpd.notifications import NotificationEvent
+from tests.helpers import create_files, path_from_project_root, run_cassette
 
 LOGGER = logging.getLogger("test_mount_guard")
 
@@ -115,3 +118,111 @@ def test_check_creates_nothing_under_directory(
     target = tmp_path / "does" / "not" / "exist"
     assert _check(target) is False
     assert not os.path.exists(tmp_path / "does")
+
+
+# --- core_single_run wiring ---------------------------------------------------
+
+_ROOT = path_from_project_root(__file__)
+_DOWNLOADED = os.path.join("2018", "07", "31", "IMG_7409.JPG")
+
+
+class _Run:
+    """One icloudpd invocation against the recorded listing_photos cassette."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.data_dir = str(tmp_path / "data")
+        self.cookie_dir = str(tmp_path / "cookie")
+        os.makedirs(self.data_dir)
+        shutil.copytree(os.path.join(_ROOT, "cookie"), self.cookie_dir)
+        create_files(
+            self.data_dir,
+            [("2018/07/30", "IMG_7408.JPG", 1151066), ("2018/07/30", "IMG_7407.JPG", 656257)],
+        )
+
+    def mount(self) -> None:
+        Path(self.data_dir, ".mounted").write_text("")
+
+    def run(self, *extra: str) -> tuple[int, list[dict[str, Any]]]:
+        with patch("icloudpd.notifications.subprocess.run") as run_mock:
+            run_mock.return_value.returncode = 0
+            run_mock.return_value.stderr = ""
+            result = run_cassette(
+                os.path.join(_ROOT, "vcr_cassettes", "listing_photos.yml"),
+                [
+                    "--username",
+                    "jdoe@gmail.com",
+                    "--password",
+                    "password1",
+                    "--recent",
+                    "5",
+                    "--skip-videos",
+                    "--skip-live-photos",
+                    "--no-progress-bar",
+                    "--threads-num",
+                    "1",
+                    "--notification-script",
+                    "./test_script.sh",
+                    "-d",
+                    self.data_dir,
+                    "--cookie-directory",
+                    self.cookie_dir,
+                    *extra,
+                ],
+            )
+            events = [json.loads(c.kwargs["input"]) for c in run_mock.call_args_list]
+        return result.exit_code, events
+
+    def downloaded(self) -> bool:
+        return os.path.isfile(os.path.join(self.data_dir, _DOWNLOADED))
+
+
+def _types(events: list[dict[str, Any]], *wanted: str) -> list[str]:
+    return [e["event_type"] for e in events if e["event_type"] in wanted]
+
+
+_GUARD_EVENTS = ("library_mount_missing", "library_mount_restored")
+
+
+def test_marker_present_run_proceeds(tmp_path: Path) -> None:
+    run = _Run(tmp_path)
+    run.mount()
+    exit_code, events = run.run("--require-mount-marker")
+    assert exit_code == 0
+    assert run.downloaded()
+    assert _types(events, *_GUARD_EVENTS) == []
+
+
+def test_marker_missing_exits_nonzero_and_writes_nothing(tmp_path: Path) -> None:
+    run = _Run(tmp_path)
+    exit_code, events = run.run("--require-mount-marker")
+    assert exit_code == 1
+    assert not run.downloaded()
+    assert not os.path.exists(os.path.join(run.data_dir, ".icloudpd"))
+    assert _types(events, *_GUARD_EVENTS) == ["library_mount_missing"]
+
+
+def test_flag_off_ignores_missing_marker(tmp_path: Path) -> None:
+    run = _Run(tmp_path)
+    exit_code, events = run.run()
+    assert exit_code == 0
+    assert run.downloaded()
+    assert _types(events, *_GUARD_EVENTS) == []
+
+
+def test_auth_only_skips_the_guard(tmp_path: Path) -> None:
+    run = _Run(tmp_path)
+    exit_code, events = run.run("--require-mount-marker", "--auth-only")
+    assert exit_code == 0
+    assert _types(events, *_GUARD_EVENTS) == []
+
+
+def test_marker_returns_next_run_proceeds(tmp_path: Path) -> None:
+    run = _Run(tmp_path)
+    first_exit, first_events = run.run("--require-mount-marker")
+    assert first_exit == 1
+    run.mount()
+    second_exit, second_events = run.run("--require-mount-marker")
+    assert second_exit == 0
+    assert run.downloaded()
+    assert _types(first_events, *_GUARD_EVENTS) == ["library_mount_missing"]
+    assert _types(second_events, *_GUARD_EVENTS) == ["library_mount_restored"]
