@@ -1048,11 +1048,27 @@ def core_single_run(
 
                     directory = os.path.normpath(user_config.directory)
 
+                    state_directory = (
+                        os.path.expanduser(os.path.normpath(user_config.state_directory))
+                        if user_config.state_directory
+                        else None
+                    )
                     manifest_handle = (
-                        manifest.open(logger, directory)
+                        manifest.open(logger, directory, state_directory)
                         if not global_config.only_print_filenames
                         else None
                     )
+                    if (
+                        state_directory is not None
+                        and manifest_handle is None
+                        and not global_config.only_print_filenames
+                    ):
+                        logger.error(
+                            "Could not open the asset manifest in state_directory %s; "
+                            "refusing to run without it.",
+                            state_directory,
+                        )
+                        return 1
 
                     try:
                         if user_config.skip_photos or user_config.skip_videos:

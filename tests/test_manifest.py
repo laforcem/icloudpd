@@ -236,3 +236,58 @@ class PerDirectoryIsolationTestCase(TestCase):
         finally:
             manifest.close(handle_a)
             manifest.close(handle_b)
+
+
+class OpenManifestStateDirectoryTestCase(TestCase):
+    @pytest.fixture(autouse=True)
+    def inject_fixtures(self, tmp_path: Path) -> None:
+        self.library = str(tmp_path / "library")
+        self.state = str(tmp_path / "state")
+        os.makedirs(self.library)
+        self.logger = logging.getLogger("test_manifest_state_dir")
+
+    def _close(self, handle: "manifest.ManifestHandle | None") -> None:
+        assert handle is not None
+        manifest.close(handle)
+
+    def _make_db(self, directory: str) -> None:
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, "state.db"), "wb"):
+            pass
+
+    def test_open_with_state_directory_puts_db_there_and_creates_nothing_in_library(self) -> None:
+        handle = manifest.open(self.logger, self.library, self.state)
+        self._close(handle)
+        self.assertTrue(os.path.isfile(os.path.join(self.state, "state.db")))
+        self.assertFalse(os.path.exists(os.path.join(self.library, ".icloudpd")))
+
+    def test_open_with_state_directory_creates_missing_state_directory(self) -> None:
+        nested = os.path.join(self.state, "a", "b")
+        handle = manifest.open(self.logger, self.library, nested)
+        self._close(handle)
+        self.assertTrue(os.path.isfile(os.path.join(nested, "state.db")))
+
+    def test_open_with_state_directory_warns_when_legacy_db_exists(self) -> None:
+        legacy_dir = os.path.join(self.library, ".icloudpd")
+        self._make_db(legacy_dir)
+        with self.assertLogs(self.logger, level="WARNING") as captured:
+            handle = manifest.open(self.logger, self.library, self.state)
+        self._close(handle)
+        message = "\n".join(captured.output)
+        self.assertIn(os.path.join(legacy_dir, "state.db"), message)
+        self.assertIn(os.path.join(self.state, "state.db"), message)
+
+    def test_open_with_state_directory_does_not_warn_when_new_db_exists(self) -> None:
+        self._make_db(os.path.join(self.library, ".icloudpd"))
+        handle = manifest.open(self.logger, self.library, self.state)
+        self._close(handle)
+        with self.assertNoLogs(self.logger, level="WARNING"):
+            handle = manifest.open(self.logger, self.library, self.state)
+        self._close(handle)
+
+    def test_open_with_unwritable_state_directory_returns_none(self) -> None:
+        blocker = os.path.join(self.library, "blocker")
+        with open(blocker, "w") as f:
+            f.write("not a directory")
+        handle = manifest.open(self.logger, self.library, os.path.join(blocker, "state"))
+        self.assertIsNone(handle)

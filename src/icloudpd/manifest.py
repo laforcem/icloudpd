@@ -1,7 +1,9 @@
 """Persistent record of which iCloud assets have been downloaded to which local paths.
 
 One manifest database lives per download directory, at
-<download_dir>/.icloudpd/state.db. All operations here are best-effort:
+<download_dir>/.icloudpd/state.db, or at <state_directory>/state.db when a
+state directory is configured (so it can sit on local disk while the library
+is on a network mount). All operations here are best-effort:
 failures are logged and swallowed rather than raised, because this module
 is infrastructure for other features and its absence must never break
 the core download loop.
@@ -52,25 +54,39 @@ class ManifestHandle:
     pending_writes: int = 0
 
 
-def open(logger: logging.Logger, download_dir: str) -> ManifestHandle | None:
+def open(
+    logger: logging.Logger, download_dir: str, state_directory: str | None = None
+) -> ManifestHandle | None:
     """Open (creating if needed) the manifest database for a download directory.
 
-    Returns None if the database could not be opened or created, in which
-    case callers should proceed without manifest tracking rather than fail.
+    The database lives in state_directory when given, otherwise in
+    <download_dir>/.icloudpd. Returns None if the database could not be opened
+    or created; callers decide whether to proceed without manifest tracking.
     """
-    manifest_dir = os.path.join(download_dir, ".icloudpd")
+    legacy_db_path = os.path.join(download_dir, ".icloudpd", "state.db")
+    manifest_dir = (
+        state_directory if state_directory else os.path.join(download_dir, ".icloudpd")
+    )
+    db_path = os.path.join(manifest_dir, "state.db")
+    if state_directory and not os.path.exists(db_path) and os.path.exists(legacy_db_path):
+        logger.warning(
+            "Found an existing asset manifest at %s but state_directory is set, so a new "
+            "one will be created at %s. To keep your history, stop icloudpd and copy the "
+            "old state.db to the new location.",
+            legacy_db_path,
+            db_path,
+        )
     try:
         os.makedirs(manifest_dir, exist_ok=True)
-        db_path = os.path.join(manifest_dir, "state.db")
         connection = sqlite3.connect(db_path)
         connection.execute(_SCHEMA)
         connection.commit()
         return ManifestHandle(connection=connection)
     except OSError as ex:
-        logger.warning("Could not open asset manifest in %s: %s", download_dir, ex)
+        logger.warning("Could not open asset manifest in %s: %s", manifest_dir, ex)
         return None
     except sqlite3.Error as ex:
-        logger.warning("Could not open asset manifest in %s: %s", download_dir, ex)
+        logger.warning("Could not open asset manifest in %s: %s", manifest_dir, ex)
         return None
 
 
