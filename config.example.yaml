@@ -4,6 +4,10 @@ app:
 
 all_users:
   directory: /data
+  # Library on a network mount (NFS)? Keep the state database on local disk,
+  # and refuse to run if the mount drops (see README, "Library on a network mount").
+  # state_directory: /state
+  # require_mount_marker: true
 
 users:
   - username: you@icloud.com
