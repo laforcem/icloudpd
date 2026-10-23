@@ -41,6 +41,8 @@ users:
 
 icloudpd keeps a small SQLite database (`state.db`) recording which assets it has downloaded. By default it lives inside the library, at `<directory>/.icloudpd/state.db`. SQLite's file locking is unreliable over NFS, so the database can corrupt. Set `state_directory` (CLI: `--state-directory`) to put it at `<state_directory>/state.db` on local disk instead. The directory is created if missing, and nothing is created under `<directory>/.icloudpd`.
 
+Each user needs their own `state_directory`, so set it per user, not under `all_users`. icloudpd refuses to start if two users share one.
+
 If `state_directory` is set and the database can't be opened there, that user's run fails rather than continuing without it.
 
 **Migrating an existing install:**

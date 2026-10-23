@@ -842,3 +842,26 @@ def test_require_mount_marker_flag_maps_to_config() -> None:
     off = _first_user(["--directory", "abc", "--username", "u1"])
     assert on.require_mount_marker is True
     assert off.require_mount_marker is False
+
+
+def _two_users_sharing(state_a: str, state_b: str) -> tuple[GlobalConfig, list[UserConfig]]:
+    import dataclasses
+
+    global_config, users = parse(["--directory", "abc", "--username", "u1"])
+    first = dataclasses.replace(users[0], state_directory=state_a)
+    second = dataclasses.replace(users[0], username="u2", state_directory=state_b)
+    return global_config, [first, second]
+
+
+def test_run_with_configs_rejects_users_sharing_a_state_directory() -> None:
+    from icloudpd.base import run_with_configs
+
+    global_config, users = _two_users_sharing("/state/shared", "/state/shared")
+    assert run_with_configs(global_config, users) == 2
+
+
+def test_run_with_configs_treats_equivalent_state_paths_as_shared() -> None:
+    from icloudpd.base import run_with_configs
+
+    global_config, users = _two_users_sharing("/state/shared", "/state/other/../shared/")
+    assert run_with_configs(global_config, users) == 2

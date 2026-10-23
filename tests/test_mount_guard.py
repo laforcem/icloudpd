@@ -25,10 +25,11 @@ def _reset_guard() -> Iterator[None]:
 @pytest.fixture
 def events() -> Iterator[list[NotificationEvent]]:
     captured: list[NotificationEvent] = []
-    with patch(
-        "icloudpd.mount_guard.notifications.notify",
-        side_effect=lambda _logger, _script, event: captured.append(event),
-    ):
+    def fake_notify(_logger: Any, _script: Any, event: NotificationEvent) -> bool:
+        captured.append(event)
+        return True
+
+    with patch("icloudpd.mount_guard.notifications.notify", side_effect=fake_notify):
         yield captured
 
 
@@ -118,6 +119,47 @@ def test_check_creates_nothing_under_directory(
     target = tmp_path / "does" / "not" / "exist"
     assert _check(target) is False
     assert not os.path.exists(tmp_path / "does")
+
+
+def _failing_then_ok(results: list[bool], captured: list[NotificationEvent]) -> Any:
+    outcomes = iter(results)
+
+    def fake_notify(_logger: Any, _script: Any, event: NotificationEvent) -> bool:
+        captured.append(event)
+        return next(outcomes)
+
+    return fake_notify
+
+
+def test_failed_missing_alert_is_retried_next_cycle_until_it_is_delivered(tmp_path: Path) -> None:
+    captured: list[NotificationEvent] = []
+    with patch(
+        "icloudpd.mount_guard.notifications.notify",
+        side_effect=_failing_then_ok([False, True, True], captured),
+    ):
+        assert _check(tmp_path) is False  # alert fails
+        assert _check(tmp_path) is False  # retried, succeeds
+        assert _check(tmp_path) is False  # delivered already: quiet
+    assert [e.event_type for e in captured] == ["library_mount_missing"] * 2
+
+
+def test_failed_restored_alert_is_retried_next_cycle(tmp_path: Path) -> None:
+    captured: list[NotificationEvent] = []
+    target = tmp_path / "lib"
+    with patch(
+        "icloudpd.mount_guard.notifications.notify",
+        side_effect=_failing_then_ok([True, False, True], captured),
+    ):
+        assert _check(target) is False  # missing alert delivered
+        _mount(target)
+        assert _check(target) is True  # restored alert fails
+        assert _check(target) is True  # retried, succeeds
+        assert _check(target) is True  # quiet
+    assert [e.event_type for e in captured] == [
+        "library_mount_missing",
+        "library_mount_restored",
+        "library_mount_restored",
+    ]
 
 
 # --- core_single_run wiring ---------------------------------------------------

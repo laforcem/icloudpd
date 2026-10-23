@@ -56,9 +56,10 @@ def notify(
     script_path: str | None,
     event: NotificationEvent,
     timeout_s: float = 10.0,
-) -> None:
+) -> bool:
+    """Run the notification script. True if delivered (or nothing is configured)."""
     if script_path is None:
-        return
+        return True
     payload = json.dumps(asdict(event))
     try:
         result = subprocess.run(
@@ -75,9 +76,12 @@ def notify(
                 result.returncode,
                 result.stderr,
             )
+            return False
+        return True
     except OSError as ex:
         logger.warning("Could not run notification script %s: %s", script_path, ex)
     except subprocess.TimeoutExpired:
         logger.warning(
             "Notification script %s timed out after %.1fs", script_path, timeout_s
         )
+    return False

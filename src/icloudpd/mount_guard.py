@@ -6,8 +6,10 @@ host's own disk. Libraries opt in by carrying a `.mounted` marker file at their
 root; this module checks for it before a user's run.
 
 Notifications fire on transitions only (first failure, first recovery) so a
-long outage in watch mode does not send an alert every cycle. The transition
-state is in memory, so a process restart during an outage alerts once more.
+long outage in watch mode does not send an alert every cycle. A transition
+counts only once its notification was delivered; a failed send is retried on
+the next cycle. The state is in memory, so a process restart during an outage
+alerts once more.
 """
 
 from __future__ import annotations
@@ -40,10 +42,9 @@ def check(
     """
     if os.path.isfile(os.path.join(directory, MARKER_FILENAME)):
         if username in _missing:
-            _missing.discard(username)
             message = f"{username}'s library at {directory} is mounted again; resuming."
             logger.info(message)
-            notifications.notify(
+            delivered = notifications.notify(
                 logger,
                 notification_script,
                 notifications.build_event(
@@ -53,6 +54,10 @@ def check(
                     data={"directory": directory},
                 ),
             )
+            # Keep the outage on record until the recovery alert is delivered,
+            # so a failed send is retried next cycle.
+            if delivered:
+                _missing.discard(username)
         return True
 
     message = (
@@ -61,8 +66,7 @@ def check(
     )
     logger.error(message)
     if username not in _missing:
-        _missing.add(username)
-        notifications.notify(
+        delivered = notifications.notify(
             logger,
             notification_script,
             notifications.build_event(
@@ -72,4 +76,7 @@ def check(
                 data={"directory": directory},
             ),
         )
+        # Only remember the outage once the alert got out; otherwise retry next cycle.
+        if delivered:
+            _missing.add(username)
     return False

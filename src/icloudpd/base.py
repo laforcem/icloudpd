@@ -260,11 +260,39 @@ def create_logger(config: GlobalConfig) -> logging.Logger:
     return logger
 
 
+def _has_shared_state_directory(logger: logging.Logger, user_configs: Sequence[UserConfig]) -> bool:
+    """Log an error and return True if two users would share one state.db.
+
+    The manifest is one database per library; accounts sharing a state
+    directory would mix their records and hide each other's migration warning.
+    """
+    owners: Dict[str, str] = {}
+    shared = False
+    for user_config in user_configs:
+        if not user_config.state_directory:
+            continue
+        resolved = os.path.abspath(os.path.expanduser(user_config.state_directory))
+        if resolved in owners:
+            logger.error(
+                "state_directory %s is used by both %s and %s; give each user their own.",
+                resolved,
+                owners[resolved],
+                user_config.username,
+            )
+            shared = True
+        else:
+            owners[resolved] = user_config.username
+    return shared
+
+
 def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserConfig]) -> int:
     """Run the application with the new configuration system"""
 
     # Create shared logger
     logger = create_logger(global_config)
+
+    if _has_shared_state_directory(logger, user_configs):
+        return 2
 
     # Create shared status exchange for web server and progress tracking
     shared_status_exchange = StatusExchange()

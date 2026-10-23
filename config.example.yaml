@@ -4,14 +4,16 @@ app:
 
 all_users:
   directory: /data
-  # Library on a network mount (NFS)? Keep the state database on local disk,
-  # and refuse to run if the mount drops (see README, "Library on a network mount").
-  # state_directory: /state
+  # Library on a network mount (NFS)? Refuse to run if the mount drops
+  # (see README, "Library on a network mount").
   # require_mount_marker: true
 
 users:
   - username: you@icloud.com
     password_file: /run/secrets/icloud_password_you
+    # Keep the state database on local disk; one directory per user, never shared.
+    # state_directory: /state/you
   - username: partner@icloud.com
     password_file: /run/secrets/icloud_password_partner
     directory: /data/account2
+    # state_directory: /state/partner
