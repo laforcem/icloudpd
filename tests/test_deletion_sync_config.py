@@ -189,3 +189,27 @@ def test_warns_no_state_directory(caplog: pytest.LogCaptureFixture) -> None:
 def test_db_path() -> None:
     assert manifest.db_path("/d", None) == "/d/.icloudpd/state.db"
     assert manifest.db_path("/d", "/s") == "/s/state.db"
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"require_mount_marker": False}, "require_mount_marker"),
+        ({"recent": 5}, "recent"),
+        ({"until_found": 3}, "until_found"),
+    ],
+    ids=["no-mount-marker", "recent", "until-found"],
+)
+def test_run_with_configs_rejects_unsafe_sync_config(
+    change: dict[str, object], message: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The cli() checks, repeated for callers that build configs themselves."""
+    global_config, users = _sync_user(state_directory="/s", deletion_sync_threshold=5)
+    users = [dataclasses.replace(users[0], **change)]  # type: ignore[arg-type]
+    with (
+        patch.object(base, "_process_all_users_once", return_value=0) as process,
+        caplog.at_level(logging.ERROR),
+    ):
+        assert base.run_with_configs(global_config, users) == 2
+    process.assert_not_called()
+    assert any(r.levelno == logging.ERROR and message in r.getMessage() for r in caplog.records)

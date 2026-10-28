@@ -335,6 +335,30 @@ def _has_shared_deletion_db(logger: logging.Logger, user_configs: Sequence[UserC
     return shared
 
 
+def _deletion_sync_config_errors(user_configs: Sequence[UserConfig]) -> List[str]:
+    """Unsafe sync_deletions settings, checked here as well as in cli().
+
+    cli() rejects these with its own messages; this repeats the check for any
+    caller that builds UserConfig objects itself, since each is load-bearing
+    for not deleting photos that should stay.
+    """
+    errors: List[str] = []
+    for user_config in user_configs:
+        if not user_config.sync_deletions:
+            continue
+        if not user_config.require_mount_marker:
+            errors.append(
+                f"{user_config.username}: sync_deletions requires require_mount_marker, so a "
+                "dropped mount is never mistaken for mass deletion"
+            )
+        if user_config.recent is not None or user_config.until_found is not None:
+            errors.append(
+                f"{user_config.username}: sync_deletions is not compatible with recent or "
+                "until_found"
+            )
+    return errors
+
+
 def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserConfig]) -> int:
     """Run the application with the new configuration system"""
 
@@ -345,6 +369,12 @@ def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserCon
         return 2
 
     if _has_shared_deletion_db(logger, user_configs):
+        return 2
+
+    unsafe = _deletion_sync_config_errors(user_configs)
+    for error in unsafe:
+        logger.error(error)
+    if unsafe:
         return 2
 
     for user_config in user_configs:
@@ -931,7 +961,15 @@ def download_builder(
         verdict = deletion_sync.judge_asset(logger, deletion_scan, photo, planned)
         if verdict != deletion_sync.Verdict.PROCEED:
             # counter untouched: safe because until_found is rejected with sync_deletions.
-            logger.debug("%s held for deletion sync (%s)", filename_builder(photo), verdict.value)
+            if dry_run and verdict == deletion_sync.Verdict.SUSPECT:
+                logger.info(
+                    "[DRY RUN] %s would become a deletion candidate after one more scan",
+                    filename_builder(photo),
+                )
+            else:
+                logger.debug(
+                    "%s held for deletion sync (%s)", filename_builder(photo), verdict.value
+                )
             return False
 
     for requested_size in primary_sizes:

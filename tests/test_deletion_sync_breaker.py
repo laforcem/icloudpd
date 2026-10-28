@@ -769,3 +769,38 @@ def test_auto_delete_dry_run_forgets_nothing(lib: Library) -> None:
     _auto_delete(lib, "A", dry_run=True)
     assert lib.manifest_rows("A") == 1
     assert lib.statuses() == {"A": "held"}
+
+
+def test_trip_clears_when_every_held_item_reappeared(lib: Library) -> None:
+    lib.candidates("A")
+    lib.scan(threshold=1)
+    assert lib.statuses() == {"A": "held"} and lib.tripped() == 1
+    Path(lib.assets["A"][1]).write_bytes(b"x")  # A is back on disk: dropped from the batch
+    lib.scan(threshold=5)
+    assert lib.statuses() == {} and lib.tripped() == 0
+    lib.candidates("B")
+    deleter = Deleter()
+    lib.scan(threshold=5, delete=deleter)
+    assert deleter.calls == ["B"]
+
+
+def test_trip_clears_then_trips_again_in_one_scan(lib: Library) -> None:
+    lib.candidates("A")
+    lib.scan(threshold=1)
+    Path(lib.assets["A"][1]).write_bytes(b"x")
+    lib.candidates("B")  # B's debounce scan also drops A from the batch
+    lib.scan(threshold=1)
+    assert lib.statuses() == {"B": "held"} and lib.tripped() == 1
+
+
+def test_sqlite_failure_rolls_back_partial_write(lib: Library) -> None:
+    lib.candidates("A", "B")
+    lib.handle.connection.execute(
+        "CREATE TRIGGER no_trip BEFORE UPDATE OF tripped ON deletion_state"
+        " BEGIN SELECT RAISE(ABORT, 'boom'); END"
+    )
+    lib.handle.connection.commit()
+    with pytest.raises(deletion_sync.DeletionSyncError):
+        lib.scan(threshold=1)  # holds A and B, then fails setting the trip
+    manifest.close(lib.handle)  # commits whatever is pending, as the run's finally does
+    assert lib.statuses() == {}  # not two held items without a trip

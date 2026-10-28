@@ -359,3 +359,19 @@ def test_present_assets_do_not_commit_per_asset(
         assert verdict == Verdict.PROCEED
     handle.connection.set_trace_callback(None)
     assert [s for s in statements if s.strip().upper().startswith("COMMIT")] == []
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["real", "dry-run"])
+def test_mark_from_incomplete_scan_does_not_count(
+    tmp_path: Path, handle: manifest.ManifestHandle, dry_run: bool
+) -> None:
+    path = str(tmp_path / "IMG_1.JPG")
+    record(handle, path)
+    scan1 = deletion_sync.open_scan(LOGGER, handle, False)
+    assert deletion_sync.judge_asset(LOGGER, scan1, asset(), [(path, 1)]) == Verdict.SUSPECT
+    # scan 1 never completes; scan 2 completes without visiting the asset
+    scan2 = deletion_sync.open_scan(LOGGER, handle, False)
+    complete(handle, scan2.scan_seq)
+    scan3 = deletion_sync.open_scan(LOGGER, handle, dry_run)
+    assert deletion_sync.judge_asset(LOGGER, scan3, asset(), [(path, 1)]) == Verdict.SUSPECT
+    assert not scan3.candidates

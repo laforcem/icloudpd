@@ -1,7 +1,8 @@
 """Deletion detection wired into the real download loop (cassette-driven).
 
 These call cli.parse + base.run_with_configs rather than cli(): the cassettes
-only support --recent, which cli() rejects together with --sync-deletions.
+only support --recent, which cli() and run_with_configs reject together with
+--sync-deletions; _Library.run patches out just that check.
 """
 
 import os
@@ -68,7 +69,12 @@ class _Library:
                 *params,
             ]
         )
-        with vcr.use_cassette(self.cassette):
+        # The cassettes need --recent, which run_with_configs (like cli()) rejects
+        # with --sync-deletions; bypass only that check here.
+        with (
+            vcr.use_cassette(self.cassette),
+            patch("icloudpd.base._deletion_sync_config_errors", return_value=[]),
+        ):
             return base.run_with_configs(global_config, users)
 
     def path(self, relative: str) -> str:
@@ -511,3 +517,12 @@ def test_tilde_directory_resolved_once_for_everything(
     with library.db() as conn:
         stored = {r[0] for r in conn.execute("SELECT local_path FROM downloaded_assets")}
     assert library.path(_DELETED) in stored
+
+
+def test_dry_run_logs_suspects_at_info(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    library = _listing_library(tmp_path)
+    assert library.run(_SYNC) == 0
+    os.remove(library.path(_DELETED))
+    assert library.run([*_SYNC, "--dry-run"]) == 0
+    expected = "[DRY RUN] IMG_7409.JPG would become a deletion candidate after one more scan"
+    assert [r.levelname for r in caplog.records if r.getMessage() == expected] == ["INFO"]

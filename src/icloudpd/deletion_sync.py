@@ -10,6 +10,7 @@ as DeletionSyncError and callers must abort the deletion pass.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import functools
 import json
@@ -100,12 +101,34 @@ INSERT OR IGNORE INTO deletion_state (id) VALUES (1);
 _F = TypeVar("_F", bound=Callable[..., Any])
 
 
+def _connection_of(args: Sequence[Any]) -> sqlite3.Connection | None:
+    for arg in args:
+        if isinstance(arg, sqlite3.Connection):
+            return arg
+        if isinstance(arg, DeletionScan | manifest.ManifestHandle):
+            return arg.connection
+    return None
+
+
 def _wrap_sqlite(func: _F) -> _F:
+    """Re-raise sqlite failures as DeletionSyncError, rolling back first.
+
+    The rollback keeps manifest.close (which commits) from making a
+    half-applied write durable, e.g. held items without the trip flag. It
+    also discards any manifest record_seen writes still batched on the same
+    connection; those files are recorded again on the next run.
+    """
+
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return func(*args, **kwargs)
         except sqlite3.Error as ex:
+            connection = _connection_of(args)
+            if connection is not None:
+                # Already closed, say: then nothing is left to commit either.
+                with contextlib.suppress(sqlite3.Error):
+                    connection.rollback()
             raise DeletionSyncError(f"{func.__name__}: {ex}") from ex
 
     return cast(_F, wrapper)
@@ -136,6 +159,12 @@ def open_scan(
         connection.backup(copy)
         connection = copy
     ensure_schema(connection)
+    # A mark from a scan that never completed must not count toward the
+    # two-scan debounce (in dry-run this only touches the in-memory copy).
+    connection.execute(
+        "UPDATE downloaded_assets SET missing_since_scan = NULL WHERE missing_since_scan >"
+        " (SELECT last_completed_scan_seq FROM deletion_state WHERE id = 1)"
+    )
     if not dry_run:
         connection.execute("UPDATE deletion_state SET scan_seq = scan_seq + 1 WHERE id = 1")
         connection.commit()
@@ -509,6 +538,13 @@ def finish_scan(
 
     # 3. New candidates go through the circuit breaker.
     held = {i.record_name for i in list_items(conn, [ItemStatus.HELD])}
+    if not held and not dry:
+        # Every held item reappeared locally (or left iCloud): no batch is left
+        # to resolve, so the trip ends here. New candidates below may trip again.
+        conn.execute(
+            "UPDATE deletion_state SET tripped = 0, tripped_utc = NULL WHERE id = 1 AND tripped = 1"
+        )
+        conn.commit()
     new = [photo for rid, photo in scan.candidates.items() if rid not in held]
     if new:
         cutoff = _iso(moment - AUTO_DELETE_WINDOW)
@@ -518,6 +554,8 @@ def finish_scan(
             (ItemStatus.DELETED.value, cutoff),
         ).fetchone()
         (tripped,) = conn.execute("SELECT tripped FROM deletion_state WHERE id = 1").fetchone()
+        if not held:
+            tripped = 0  # cleared above; in dry-run only as if it were
         count = len(held) + len(new) + recent
         if threshold > 0 and (tripped or count >= threshold):
             held_count = len(held) + len(new)
