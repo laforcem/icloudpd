@@ -417,3 +417,26 @@ def test_unreadable_folder_aborts_run(tmp_path: Path) -> None:
     assert library.scan_state()[1] == 1
     with library.db() as conn:
         assert deletion_sync.list_items(conn, list(deletion_sync.ItemStatus)) == []
+
+
+def test_mount_dropping_mid_scan_marks_and_deletes_nothing(tmp_path: Path) -> None:
+    library = _listing_library(tmp_path)
+    assert library.run(_SYNC) == 0
+    os.remove(library.path(_DELETED))
+    real_judge = deletion_sync.judge_asset
+
+    def dropping_judge(*args: Any) -> deletion_sync.Verdict:
+        marker = os.path.join(library.data_dir, ".mounted")
+        if os.path.exists(marker):
+            os.remove(marker)
+        return real_judge(*args)
+
+    with (
+        patch("icloudpd.deletion_sync.judge_asset", side_effect=dropping_judge),
+        patch("icloudpd.deletion_sync.delete_asset") as delete_asset,
+    ):
+        library.run(_SYNC)
+    delete_asset.assert_not_called()
+    assert library.missing_since(_DELETED) is None
+    assert library.scan_state() == (2, 1)
+    assert not os.path.isfile(library.path(_DELETED))

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence, TypeVar, cast
 
-from icloudpd import manifest
+from icloudpd import manifest, mount_guard
 from pyicloud_ipd.asset_version import add_suffix_to_filename
 from pyicloud_ipd.services.photos import PhotoAsset, PhotoLibrary
 
@@ -39,6 +39,7 @@ class Verdict(Enum):
     SUSPECT = "suspect"  # fully missing, first scan: skip download
     CANDIDATE = "candidate"  # fully missing, confirmed: skip download, collected for finish_scan
     HELD = "held"  # held/approved item: skip download
+    UNVERIFIED = "unverified"  # fully missing but the mount marker is gone: skip, write nothing
 
 
 class ItemStatus(str, Enum):
@@ -69,6 +70,10 @@ class DeletionScan:
     dry_run: bool
     candidates: dict[str, PhotoAsset]  # record_name -> asset, new this scan
     seen: dict[str, PhotoAsset]  # held/approved items visited this scan
+    # Library root carrying the mount marker, re-checked before any asset is
+    # marked or confirmed missing and before finish_scan acts. None: no check.
+    marker_dir: str | None = None
+    unverified: bool = False  # the marker went missing during this scan
 
 
 _SCHEMA = """
@@ -119,7 +124,10 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
 
 @_wrap_sqlite
 def open_scan(
-    logger: logging.Logger, handle: manifest.ManifestHandle, dry_run: bool
+    logger: logging.Logger,
+    handle: manifest.ManifestHandle,
+    dry_run: bool,
+    marker_dir: str | None = None,
 ) -> DeletionScan:
     connection = handle.connection
     if dry_run:
@@ -144,7 +152,15 @@ def open_scan(
         dry_run=dry_run,
         candidates={},
         seen={},
+        marker_dir=marker_dir,
     )
+
+
+def _mount_verified(scan: DeletionScan) -> bool:
+    """Pure check (no notifications) that the library's mount marker is still there."""
+    if scan.marker_dir is None:
+        return True
+    return os.path.isfile(os.path.join(scan.marker_dir, mount_guard.MARKER_FILENAME))
 
 
 def _is_present(path: str) -> bool:
@@ -238,6 +254,18 @@ def judge_asset(
                 drop_item()
             conn.commit()
         return Verdict.PROCEED
+
+    # Checked after the stat above: a mount that dropped before it took the
+    # marker with it, so a vanished file is only trusted while the marker stays.
+    if not _mount_verified(scan):
+        if not scan.unverified:
+            logger.error(
+                "Library mount marker in %s disappeared during the scan; deletion sync "
+                "will not count this scan or act on it",
+                scan.marker_dir,
+            )
+        scan.unverified = True
+        return Verdict.UNVERIFIED
 
     newest, unmarked = conn.execute(
         "SELECT MAX(missing_since_scan), COUNT(*) - COUNT(missing_since_scan)"
@@ -406,6 +434,15 @@ def finish_scan(
     dry = scan.dry_run
     moment = now if now is not None else datetime.datetime.now(datetime.timezone.utc)
     stamp = _iso(moment)
+
+    # 0. A scan that could not see the files proposes nothing.
+    if scan.unverified or not _mount_verified(scan):
+        logger.error(
+            "Library mount marker in %s is missing; this scan does not count and "
+            "nothing was deleted or held",
+            scan.marker_dir,
+        )
+        return
 
     # 1. The scan enumerated every album to the end.
     if not dry:

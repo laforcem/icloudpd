@@ -1320,7 +1320,10 @@ def core_single_run(
                     try:
                         if user_config.sync_deletions and manifest_handle is not None:
                             deletion_scan = deletion_sync.open_scan(
-                                logger, manifest_handle, user_config.dry_run
+                                logger,
+                                manifest_handle,
+                                user_config.dry_run,
+                                marker_dir=directory if user_config.require_mount_marker else None,
                             )
                         scan_cancelled = False
                         if user_config.skip_photos or user_config.skip_videos:

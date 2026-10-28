@@ -613,3 +613,90 @@ def test_unreadable_directory_at_execution_aborts(tmp_path: Path) -> None:
     finally:
         folder.chmod(0o755)
     assert deleter.calls == []
+
+
+class MountedLibrary(Library):
+    """A Library whose root carries the mount marker, checked during the scan."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        super().__init__(tmp_path)
+        self.marker = tmp_path / ".mounted"
+        self.marker.write_text("")
+
+    def open(self) -> deletion_sync.DeletionScan:
+        return deletion_sync.open_scan(LOGGER, self.handle, False, marker_dir=str(self.dir))
+
+    def judge(self, scan: deletion_sync.DeletionScan) -> dict[str, Verdict]:
+        return {
+            name: deletion_sync.judge_asset(LOGGER, scan, photo, [(path, 1)])
+            for name, (photo, path) in self.assets.items()
+        }
+
+    def finish(self, scan: deletion_sync.DeletionScan, deleter: Deleter, threshold: int) -> None:
+        deletion_sync.finish_scan(
+            LOGGER, scan, threshold=threshold, delete=deleter, notify=Notifier(), now=T0
+        )
+
+    def completed(self) -> int:
+        return int(
+            self.handle.connection.execute(
+                "SELECT last_completed_scan_seq FROM deletion_state"
+            ).fetchone()[0]
+        )
+
+    def marks(self) -> list[Any]:
+        return [
+            r[0]
+            for r in self.handle.connection.execute(
+                "SELECT missing_since_scan FROM downloaded_assets"
+            )
+        ]
+
+
+def test_marker_gone_before_marking_writes_nothing(tmp_path: Path) -> None:
+    mlib = MountedLibrary(tmp_path)
+    mlib.add("A", "B")
+    mlib.marker.unlink()  # the mount dropped: every file looks gone
+    scan = mlib.open()
+    assert set(mlib.judge(scan).values()) == {Verdict.UNVERIFIED}
+    deleter = Deleter()
+    mlib.finish(scan, deleter, -1)
+    assert mlib.marks() == [None, None]
+    assert mlib.completed() == 0
+    assert deleter.calls == []
+
+
+def test_marker_gone_before_candidate_is_not_candidate(tmp_path: Path) -> None:
+    mlib = MountedLibrary(tmp_path)
+    mlib.add("A")
+    scan1 = mlib.open()
+    assert mlib.judge(scan1) == {"A": Verdict.SUSPECT}
+    mlib.finish(scan1, Deleter(), -1)
+    assert mlib.completed() == 1
+    mlib.marker.unlink()
+    scan2 = mlib.open()
+    assert mlib.judge(scan2) == {"A": Verdict.UNVERIFIED}
+    assert not scan2.candidates
+    deleter = Deleter()
+    mlib.finish(scan2, deleter, -1)
+    assert deleter.calls == []
+    assert mlib.completed() == 1
+
+
+@pytest.mark.parametrize("threshold", [-1, 1], ids=["would-delete", "would-hold"])
+def test_marker_gone_before_finish_scan_executes_nothing(tmp_path: Path, threshold: int) -> None:
+    mlib = MountedLibrary(tmp_path)
+    mlib.add("A", "B")
+    scan1 = mlib.open()
+    mlib.judge(scan1)
+    mlib.finish(scan1, Deleter(), threshold)
+    mlib.add_item("B", "approved")
+    scan2 = mlib.open()
+    assert mlib.judge(scan2) == {"A": Verdict.CANDIDATE, "B": Verdict.HELD}
+    mlib.marker.unlink()  # drops after judging, before the scan finishes
+    deleter = Deleter()
+    mlib.finish(scan2, deleter, threshold)
+    assert deleter.calls == []
+    assert mlib.statuses() == {"B": "approved"}
+    assert mlib.tripped() == 0
+    assert mlib.completed() == 1
