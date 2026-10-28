@@ -86,7 +86,7 @@ def add_options_for_user(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
     )
     cloned.add_argument(
         "--deletion-sync-threshold",
-        help="Abort a deletion sync that would delete more than N photos from iCloud (N >= 1). Default: -1 (no limit)",
+        help="Hold deletions for review (--list-pending-deletions, --resolve-deletions) once held + new + auto-deleted in the last 7 days reaches N (N >= 1); nothing is deleted until approved. Default: -1 (no limit)",
         type=int,
         default=None,
     )

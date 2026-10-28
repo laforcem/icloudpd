@@ -95,7 +95,18 @@ icloudpd --resolve-deletions approve --for-username you@icloud.com
 icloudpd --resolve-deletions reject --for-username you@icloud.com
 ```
 
-With a config file, add `--config /path/to/config.yaml`. Without one, also pass the `--directory` (and `--state-directory`) of that entry.
+With a config file, add `--config /path/to/config.yaml`. Without one, repeat the entry on the command line: `--username`, `--directory`, `--state-directory`, and `--library` if it isn't `PrimarySync`. `--for-username` and `--for-library` only select among the entries built from those.
+
+```sh
+# Personal library, no config file
+icloudpd --username you@icloud.com --directory /data/you --state-directory /state/you \
+  --list-pending-deletions --for-username you@icloud.com
+
+# Shared Library entry, no config file
+icloudpd --username you@icloud.com --directory /data/shared --state-directory /state/shared \
+  --library SharedSync-XXXXXXXX \
+  --list-pending-deletions --for-username you@icloud.com --for-library SharedSync-XXXXXXXX
+```
 
 - `approve`: the held photos are deleted at the end of the next completed sync. Approved photos bypass the threshold. If iCloud doesn't confirm a delete, the photo stays approved and is retried on the next sync. An approved photo that is no longer in iCloud is skipped.
 - `reject`: the photos re-download on the next sync.
