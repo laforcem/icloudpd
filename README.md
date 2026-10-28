@@ -77,7 +77,7 @@ users:
 
 **Immich.** If Immich manages the library, it removes the file from disk only when its trash is emptied, and only on a read-write mount. On a `:ro` mount nothing syncs. With Immich's default trash retention, the iCloud delete happens when Immich empties its trash, not when you delete the photo.
 
-**What counts as deleted.** A photo whose local files are all gone, in two scans in a row. The first scan only marks it. The second makes it a candidate. If any file reappears in between, the mark is cleared. Marking uses the scan's own record of what it downloaded (`state.db`), so only photos icloudpd previously downloaded can be affected.
+**What counts as deleted.** A photo whose local files are all gone, in two scans in a row. The first scan only marks it. The second makes it a candidate. If any file reappears in between, the mark is cleared. Marking uses the scan's own record of what it downloaded (`state.db`), so only photos icloudpd previously downloaded can be affected. Moving or renaming a file locally counts as deleting it: icloudpd only sees that the old path is gone. If a folder can't be read (for example after a permission change), the run stops with an error instead of treating its files as deleted, and if the `.mounted` marker disappears during a scan, that scan deletes, holds and marks nothing.
 
 **Threshold.** `deletion_sync_threshold` caps how many deletions go out unreviewed.
 
@@ -85,7 +85,7 @@ users:
 - `N >= 1`: new candidates are held, not deleted, when the held items, the new candidates, and the unreviewed deletions of the last 7 days add up to `N` or more. So `1` holds every deletion.
 - `0` and values below `-1` are rejected at startup.
 
-Only deletions that went out without review count toward the 7 days. Approved ones don't. Once a batch is held, every later candidate is held too, until you resolve the whole batch. Held photos are not re-downloaded while they wait. The check runs at the end of each completed scan; a scan that is cancelled partway deletes and holds nothing.
+Only deletions that went out without review count toward the 7 days. Approved ones don't. Once a batch is held, every later candidate is held too, until you resolve the whole batch. Held photos are not re-downloaded while they wait. A held photo whose file reappears locally is dropped from the batch on its own; if that empties the batch, the hold ends. The check runs at the end of each completed scan; a scan that is cancelled partway deletes and holds nothing.
 
 **Reviewing a held batch.** Approving is CLI-only for now. These commands read `state.db` only: no iCloud login, and they work with or without a config file. Pick the entry with `--for-username` (required) and `--for-library` (default `PrimarySync`).
 
@@ -116,7 +116,9 @@ icloudpd --username you@icloud.com --directory /data/shared --state-directory /s
 
 **Shared Library.** The Shared Library is its own library in icloudpd, with a name like `SharedSync-…`. Find it with `--list-libraries`, then add an entry with `library: SharedSync-…`. Deleting a shared photo moves it to Recently Deleted for every participant, and the contributor is notified. A separate copy of the same picture in another library is a different record and is not deleted.
 
-**Dry run.** With `--dry-run`, nothing is written, deleted or notified. The log says what would be deleted or held, judged against what earlier real scans have marked.
+**Dry run.** With `--dry-run`, no deletion state is written, and nothing is deleted or notified. The log says which photos would become candidates after one more scan, and what would be deleted or held, judged against what earlier real scans have marked. As before, a dry run still refreshes `last_seen_utc` in `state.db` for files it finds on disk.
+
+**With `auto_delete`.** Photos in iCloud's Recently Deleted are forgotten from `state.db` as well as removed locally, so restoring one in iCloud re-downloads it instead of deleting it again.
 
 **Events.** Delivered to your notification script like the other events. `data` always carries `library` and `directory`. `items` holds up to 50 entries of `{record_name, filename, asset_date}`; `total` is the full count.
 

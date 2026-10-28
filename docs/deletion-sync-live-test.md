@@ -19,10 +19,11 @@ Success is judged by the response naming the deleted record, so a failed request
        require_mount_marker: true
        sync_deletions: true
        deletion_sync_threshold: 1
+       skip_created_before: 2d       # only recent photos: keeps the test download small
    ```
 
    Then `mkdir -p /tmp/dsync-shared && touch /tmp/dsync-shared/.mounted`.
-4. Sync once: `icloudpd --config scratch.yaml`. The photos download.
+4. Sync once: `icloudpd --config scratch.yaml`. Photos created in the last two days download, including the throwaway one. (If you added it to the library more than two days after taking it, raise `skip_created_before` to cover its creation date.)
 5. Delete the throwaway photo's file from `/tmp/dsync-shared`.
 6. Sync twice. The first scan marks the photo missing. The second makes it a candidate. Threshold 1 trips on one candidate, so expect the log line `Deletion sync is holding 1 items (threshold 1)` and a `deletion_sync_threshold_tripped` event. Nothing is deleted yet.
 7. List it: `icloudpd --config scratch.yaml --list-pending-deletions --for-username you@icloud.com --for-library SharedSync-XXXXXXXX`. Expect the throwaway photo's filename.
