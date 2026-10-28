@@ -60,3 +60,58 @@ If the mount drops, `directory` becomes an empty local folder, and icloudpd woul
 When the marker is missing, icloudpd logs an error, writes nothing under `directory`, and in watch mode tries again on the next cycle. Without watch mode it moves on to the next user, then exits non-zero at the end. The check is skipped for `--auth-only` and the list commands, which don't touch the library.
 
 Alerts go through your notification script (or the bundled Telegram bot): one `library_mount_missing` alert the first time the mount goes missing, and one `library_mount_restored` alert when it returns. With the Telegram bot, the missing-mount alert has a **Check again now** button that ends the current watch-mode wait early, so you can remount and re-check without waiting out the interval.
+
+## Deletion sync
+
+Off by default. With `sync_deletions: true`, a photo you delete from the local library is moved to iCloud's Recently Deleted. Without it, icloudpd re-downloads anything missing, as before.
+
+```yaml
+users:
+  - username: you@icloud.com
+    directory: /data/you
+    state_directory: /state/you      # local disk
+    require_mount_marker: true       # required
+    sync_deletions: true             # CLI: --sync-deletions
+    deletion_sync_threshold: 50      # CLI: --deletion-sync-threshold
+```
+
+**Immich.** If Immich manages the library, it removes the file from disk only when its trash is emptied, and only on a read-write mount. On a `:ro` mount nothing syncs. With Immich's default trash retention, the iCloud delete happens when Immich empties its trash, not when you delete the photo.
+
+**What counts as deleted.** A photo whose local files are all gone, in two scans in a row. The first scan only marks it. The second makes it a candidate. If any file reappears in between, the mark is cleared. Marking uses the scan's own record of what it downloaded (`state.db`), so only photos icloudpd previously downloaded can be affected.
+
+**Threshold.** `deletion_sync_threshold` caps how many deletions go out unreviewed.
+
+- `-1` (default): no cap. icloudpd logs a warning at startup.
+- `N >= 1`: new candidates are held, not deleted, when the held items, the new candidates, and the unreviewed deletions of the last 7 days add up to `N` or more. So `1` holds every deletion.
+- `0` and values below `-1` are rejected at startup.
+
+Only deletions that went out without review count toward the 7 days. Approved ones don't. Once a batch is held, every later candidate is held too, until you resolve the whole batch. Held photos are not re-downloaded while they wait. The check runs at the end of each completed scan; a scan that is cancelled partway deletes and holds nothing.
+
+**Reviewing a held batch.** Approving is CLI-only for now. These commands read `state.db` only: no iCloud login, and they work with or without a config file. Pick the entry with `--for-username` (required) and `--for-library` (default `PrimarySync`).
+
+```sh
+icloudpd --list-pending-deletions --for-username you@icloud.com
+icloudpd --resolve-deletions approve --for-username you@icloud.com
+icloudpd --resolve-deletions reject --for-username you@icloud.com
+```
+
+With a config file, add `--config /path/to/config.yaml`. Without one, also pass the `--directory` (and `--state-directory`) of that entry.
+
+- `approve`: the held photos are deleted at the end of the next completed sync. Approved photos bypass the threshold. If iCloud doesn't confirm a delete, the photo stays approved and is retried on the next sync. An approved photo that is no longer in iCloud is skipped.
+- `reject`: the photos re-download on the next sync.
+- Approve and reject apply to the whole batch, and print what they changed. Run them while no sync is writing the database; if it is busy, they say so and exit 1.
+
+**One entry per library.** Deletion sync compares one library against one `state.db`, so each library needs its own entry with its own `directory` and `state_directory`. icloudpd refuses to start if two entries share a `state.db` and either has `sync_deletions` on. It also refuses `sync_deletions` without `require_mount_marker`, or with `recent` or `until_found`. Without `state_directory` it warns, since the record of downloads then lives in the library.
+
+**Shared Library.** The Shared Library is its own library in icloudpd, with a name like `SharedSync-…`. Find it with `--list-libraries`, then add an entry with `library: SharedSync-…`. Deleting a shared photo moves it to Recently Deleted for every participant, and the contributor is notified. A separate copy of the same picture in another library is a different record and is not deleted.
+
+**Dry run.** With `--dry-run`, nothing is written, deleted or notified. The log says what would be deleted or held, judged against what earlier real scans have marked.
+
+**Events.** Delivered to your notification script like the other events. `data` always carries `library` and `directory`. `items` holds up to 50 entries of `{record_name, filename, asset_date}`; `total` is the full count.
+
+| Event | When | `data` |
+|---|---|---|
+| `deletion_sync_threshold_tripped` | A batch was held | `held_count`, `new_count`, `threshold`, `items` (all held photos), `total` |
+| `deletion_sync_summary` | At least one delete succeeded or failed | `deleted_count`, `failed_count`, `items` (the deleted photos only), `total` |
+
+The first deletion against live iCloud is not yet verified. See [docs/deletion-sync-live-test.md](./docs/deletion-sync-live-test.md) for the manual check.
