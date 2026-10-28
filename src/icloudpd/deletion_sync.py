@@ -585,34 +585,57 @@ _BUSY_TIMEOUT_SECONDS: float = 10
 
 @_wrap_sqlite
 def resolve(
-    connection: sqlite3.Connection, decision: Literal["approve", "reject"]
+    connection: sqlite3.Connection,
+    decision: Literal["approve", "reject"],
+    record_names: Sequence[str],
 ) -> list[DeletionItem]:
-    """Approve or reject the held batch in one transaction; returns the items resolved."""
-    held = list_items(connection, [ItemStatus.HELD])
-    if not held:
-        return []
+    """Approve or reject exactly `record_names`, and only those still held.
+
+    Runs in one write transaction, so a concurrent writer cannot change the set
+    between the read and the update. Returns the items actually changed.
+    """
+    wanted = set(record_names)
     new_status = ItemStatus.APPROVED if decision == "approve" else ItemStatus.REJECTED
     now = _iso(datetime.datetime.now(datetime.timezone.utc))
-    with connection:
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        changed = [i for i in list_items(connection, [ItemStatus.HELD]) if i.record_name in wanted]
         connection.executemany(
             "UPDATE deletion_items SET status = ?, status_changed_utc = ?"
             " WHERE record_name = ? AND status = ?",
-            [(new_status.value, now, i.record_name, ItemStatus.HELD.value) for i in held],
+            [(new_status.value, now, i.record_name, ItemStatus.HELD.value) for i in changed],
         )
         if decision == "reject":
             connection.executemany(
                 "UPDATE downloaded_assets SET missing_since_scan = NULL WHERE record_name = ?",
-                [(i.record_name,) for i in held],
+                [(i.record_name,) for i in changed],
             )
-        connection.execute("UPDATE deletion_state SET tripped = 0, tripped_utc = NULL WHERE id = 1")
-    return held
+        (remaining,) = connection.execute(
+            "SELECT COUNT(*) FROM deletion_items WHERE status = ?", (ItemStatus.HELD.value,)
+        ).fetchone()
+        if remaining == 0:
+            connection.execute(
+                "UPDATE deletion_state SET tripped = 0, tripped_utc = NULL WHERE id = 1"
+            )
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+    return changed
+
+
+def _has_table(connection: sqlite3.Connection, name: str) -> bool:
+    return (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 def run_command(command: DeletionCommand, user_configs: Sequence[UserConfig]) -> int:
     matches = [
-        u
-        for u in user_configs
-        if u.username == command.username and u.library == command.library and u.directory
+        u for u in user_configs if u.username == command.username and u.library == command.library
     ]
     if not matches:
         print(
@@ -625,13 +648,26 @@ def run_command(command: DeletionCommand, user_configs: Sequence[UserConfig]) ->
             f"library {command.library!r}; selection must be unique"
         )
         return 2
+    if not matches[0].directory:
+        print(f"The configuration for username {command.username!r} has no directory")
+        return 2
     path = manifest.db_path(matches[0].directory, matches[0].state_directory)
     if not os.path.isfile(path):
         print("No held deletion batch")
         return 0
-    connection = sqlite3.connect(path, timeout=_BUSY_TIMEOUT_SECONDS)
+    listing = command.action == "list"
+    if listing:
+        # Read-only: listing must never alter the database, not even its schema.
+        uri = "file:" + urllib.parse.quote(os.path.abspath(path)) + "?mode=ro"
+        connection = sqlite3.connect(uri, uri=True, timeout=_BUSY_TIMEOUT_SECONDS)
+    else:
+        connection = sqlite3.connect(path, timeout=_BUSY_TIMEOUT_SECONDS)
     try:
-        ensure_schema(connection)
+        if not listing:
+            ensure_schema(connection)
+        elif not _has_table(connection, "deletion_items"):
+            print("No held deletion batch")
+            return 0
         held = list_items(connection, [ItemStatus.HELD])
         if not held:
             print("No held deletion batch")
@@ -639,13 +675,18 @@ def run_command(command: DeletionCommand, user_configs: Sequence[UserConfig]) ->
         print(f"{len(held)} held deletion(s):")
         for item in held:
             print(f"{item.filename}  {item.asset_date_utc}")
-        if command.action == "list":
+        if listing:
             return 0
-        resolved = resolve(connection, "approve" if command.action == "approve" else "reject")
-        if command.action == "approve":
+        approving = command.action == "approve"
+        resolved = resolve(
+            connection, "approve" if approving else "reject", [i.record_name for i in held]
+        )
+        if approving:
             print(f"Approved {len(resolved)}; they will be deleted at the end of the next sync")
         else:
             print(f"Rejected {len(resolved)}; they will re-download on the next sync")
+        if len(resolved) != len(held):
+            print(f"{len(held) - len(resolved)} changed state meanwhile and were left alone")
         return 0
     except (DeletionSyncError, sqlite3.OperationalError) as ex:
         cause = ex.__cause__ if isinstance(ex.__cause__, sqlite3.Error) else ex

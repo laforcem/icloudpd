@@ -13,7 +13,7 @@ import icloudpd.cli as cli_module
 from icloudpd import deletion_sync, manifest
 from icloudpd.cli import parse
 from icloudpd.config import UserConfig
-from icloudpd.deletion_sync import DeletionCommand, Verdict
+from icloudpd.deletion_sync import DeletionCommand, ItemStatus, Verdict
 from tests.test_deletion_sync_state import asset
 
 LOGGER = logging.getLogger("test_deletion_sync_resolve")
@@ -228,3 +228,120 @@ def test_busy_db_fails_cleanly(tmp_path: Path, capsys: pytest.CaptureFixture[str
     assert "busy" in capsys.readouterr().out
     assert statuses(path) == ["held", "held"]
     assert scalar(path, "SELECT tripped FROM deletion_state") == 1
+
+
+def test_resolve_acts_only_on_shown_items_under_race(tmp_path: Path) -> None:
+    path = seed(tmp_path)
+    conn = sqlite3.connect(path)
+    shown = [i.record_name for i in deletion_sync.list_items(conn, [ItemStatus.HELD])]
+    other = sqlite3.connect(path)
+    other.execute("UPDATE deletion_items SET status = 'deleted' WHERE record_name = 'REC2'")
+    other.execute(
+        "INSERT INTO deletion_items (record_name, filename, asset_date_utc, detected_utc,"
+        " status, status_changed_utc) VALUES ('REC3', 'REC3.JPG', 'd', 'd', 'held', 'd')"
+    )
+    other.commit()
+    other.close()
+    changed = deletion_sync.resolve(conn, "approve", shown)
+    conn.close()
+    assert [i.record_name for i in changed] == ["REC1"]
+    assert statuses(path) == ["approved", "deleted", "held"]
+    assert scalar(path, "SELECT tripped FROM deletion_state") == 1
+
+
+def test_reject_race_clears_marks_only_for_changed(tmp_path: Path) -> None:
+    path = seed(tmp_path)
+    conn = sqlite3.connect(path)
+    other = sqlite3.connect(path)
+    other.execute("UPDATE deletion_items SET status = 'approved' WHERE record_name = 'REC2'")
+    other.commit()
+    other.close()
+    changed = deletion_sync.resolve(conn, "reject", ["REC1", "REC2"])
+    conn.close()
+    assert [i.record_name for i in changed] == ["REC1"]
+    assert (
+        scalar(path, "SELECT COUNT(*) FROM downloaded_assets WHERE missing_since_scan IS NULL") == 1
+    )
+    assert (
+        scalar(path, "SELECT record_name FROM downloaded_assets WHERE missing_since_scan IS NULL")
+        == "REC1"
+    )
+
+
+def test_list_does_not_touch_legacy_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    handle = manifest.open(LOGGER, str(tmp_path))
+    assert handle is not None
+    handle.connection.close()
+    path = manifest.db_path(str(tmp_path), None)
+    before = Path(path).read_bytes()
+    code = deletion_sync.run_command(DeletionCommand("list", "a", "PrimarySync"), [user(tmp_path)])
+    assert code == 0
+    assert "No held deletion batch" in capsys.readouterr().out
+    assert Path(path).read_bytes() == before
+
+
+def test_selector_counts_before_directory_filter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    one = user(tmp_path)
+    nodir = user(tmp_path)
+    nodir.directory = ""
+    cmd = DeletionCommand("list", "a", "PrimarySync")
+    assert deletion_sync.run_command(cmd, [nodir]) == 2
+    assert "no directory" in capsys.readouterr().out
+    assert deletion_sync.run_command(cmd, [one, nodir]) == 2
+    assert "selection must be unique" in capsys.readouterr().out
+
+
+def test_for_library_defaults_to_primary_via_cli(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    seed(tmp_path)
+    code = run_cli(
+        ["-u", "a", "-d", str(tmp_path), "--for-username", "a", "--list-pending-deletions"]
+    )
+    assert code == 0
+    assert "REC1.JPG" in capsys.readouterr().out
+    code = run_cli(
+        [
+            "-u",
+            "a",
+            "-d",
+            str(tmp_path),
+            "--for-username",
+            "a",
+            "--for-library",
+            "Other",
+            "--list-pending-deletions",
+        ]
+    )
+    assert code == 2
+
+
+@pytest.mark.parametrize("action", ["approve", "reject"])
+def test_other_statuses_untouched(tmp_path: Path, action: str) -> None:
+    path = seed(tmp_path)
+    conn = sqlite3.connect(path)
+    others = ["approved", "deleted", "failed", "skipped_gone", "skipped_reappeared"]
+    for n, st in enumerate(others):
+        conn.execute(
+            "INSERT INTO deletion_items (record_name, filename, asset_date_utc, detected_utc,"
+            " status, status_changed_utc) VALUES (?, 'f', 'd', 'd', ?, 'old')",
+            (f"X{n}", st),
+        )
+    conn.commit()
+    conn.close()
+    code = deletion_sync.run_command(
+        DeletionCommand(action, "a", "PrimarySync"),  # type: ignore[arg-type]
+        [user(tmp_path)],
+    )
+    assert code == 0
+    rows = (
+        sqlite3.connect(path)
+        .execute(
+            "SELECT status, status_changed_utc FROM deletion_items WHERE record_name LIKE 'X%'"
+            " ORDER BY record_name"
+        )
+        .fetchall()
+    )
+    assert rows == [(st, "old") for st in others]
