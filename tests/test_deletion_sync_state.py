@@ -299,3 +299,45 @@ def test_sqlite_failure_raises(tmp_path: Path, handle: manifest.ManifestHandle) 
     handle.connection.close()
     with pytest.raises(DeletionSyncError):
         deletion_sync.judge_asset(LOGGER, scan, asset(), [(path, 1)])
+
+
+_ROOT_CAN_READ_ANYTHING = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+@pytest.mark.skipif(_ROOT_CAN_READ_ANYTHING, reason="root ignores directory permissions")
+def test_unreadable_directory_aborts_instead_of_missing(
+    tmp_path: Path, handle: manifest.ManifestHandle
+) -> None:
+    folder = tmp_path / "2024"
+    folder.mkdir()
+    path = make_file(folder, "IMG_1.JPG")
+    record(handle, path)
+    folder.chmod(0)
+    try:
+        scan = deletion_sync.open_scan(LOGGER, handle, False)
+        with pytest.raises(DeletionSyncError):
+            deletion_sync.judge_asset(LOGGER, scan, asset(), [(path, 1)])
+    finally:
+        folder.chmod(0o755)
+    assert missing_since(handle) == [None]
+    assert not scan.candidates
+    assert item_count(handle) == 0
+
+
+def test_not_a_directory_counts_as_missing(tmp_path: Path, handle: manifest.ManifestHandle) -> None:
+    folder = tmp_path / "2024"
+    path = str(folder / "IMG_1.JPG")
+    record(handle, path)
+    folder.write_bytes(b"now a file")  # ENOTDIR when stat'ing the recorded path
+    scan = deletion_sync.open_scan(LOGGER, handle, False)
+    assert deletion_sync.judge_asset(LOGGER, scan, asset(), [(path, 1)]) == Verdict.SUSPECT
+
+
+def test_directory_at_recorded_path_counts_as_missing(
+    tmp_path: Path, handle: manifest.ManifestHandle
+) -> None:
+    path = str(tmp_path / "IMG_1.JPG")
+    record(handle, path)
+    os.mkdir(path)
+    scan = deletion_sync.open_scan(LOGGER, handle, False)
+    assert deletion_sync.judge_asset(LOGGER, scan, asset(), [(path, 1)]) == Verdict.SUSPECT

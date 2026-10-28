@@ -395,3 +395,25 @@ def test_dry_run_leaves_state_db_unchanged(
     assert after == before
     assert any(row[3] == 2 for row in after["assets"])  # the suspect mark survived
     assert not os.path.isfile(library.path(_DELETED))
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores directory permissions"
+)
+def test_unreadable_folder_aborts_run(tmp_path: Path) -> None:
+    library = _listing_library(tmp_path)
+    assert library.run(_SYNC) == 0
+    folder = Path(library.data_dir, "2018")
+    folder.chmod(0)  # e.g. an ownership/ACL change: the files are still there
+    try:
+        with patch("icloudpd.deletion_sync.delete_asset") as delete_asset:
+            for _ in range(2):
+                assert library.run(_SYNC) != 0
+    finally:
+        folder.chmod(0o755)
+    delete_asset.assert_not_called()
+    assert os.path.isfile(library.path(_DELETED))
+    assert library.missing_since(_DELETED) is None
+    assert library.scan_state()[1] == 1
+    with library.db() as conn:
+        assert deletion_sync.list_items(conn, list(deletion_sync.ItemStatus)) == []

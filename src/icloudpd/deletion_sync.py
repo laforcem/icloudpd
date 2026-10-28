@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import sqlite3
+import stat
 import urllib.parse
 from dataclasses import dataclass
 from enum import Enum
@@ -146,6 +147,23 @@ def open_scan(
     )
 
 
+def _is_present(path: str) -> bool:
+    """True if a regular file exists at `path`; False only if it is definitely gone.
+
+    os.path.isfile reports False on any OSError, so an unreadable folder
+    (EACCES after an ownership change, a stale NFS handle, EIO) would look
+    like a deletion. Only "no such file" counts as missing here; any other
+    failure raises and aborts the run.
+    """
+    try:
+        mode = os.stat(path).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as ex:
+        raise DeletionSyncError(f"Cannot check whether {path} exists: {ex}") from ex
+    return stat.S_ISREG(mode)
+
+
 def path_variants(path: str, size_bytes: int) -> list[str]:
     """Paths under which download_builder may have stored a file planned at `path`."""
     return [
@@ -186,7 +204,7 @@ def judge_asset(
         "SELECT status FROM deletion_items WHERE record_name = ?", (rid,)
     ).fetchone()
     status = item[0] if item else None
-    present = [r for r in rows if os.path.isfile(r.local_path)]
+    present = [r for r in rows if _is_present(r.local_path)]
     matches = any(r.local_path in path_variants(p, s) for r in rows for (p, s) in planned)
     fully_missing = bool(rows) and matches and not present
 
@@ -288,7 +306,7 @@ def _capped(entries: Sequence[dict[str, str]]) -> dict[str, Any]:
 
 def _all_absent(conn: sqlite3.Connection, record_name: str) -> bool:
     rows = manifest.get_all_for_asset(manifest.ManifestHandle(connection=conn), record_name)
-    return not any(os.path.isfile(r.local_path) for r in rows)
+    return not any(_is_present(r.local_path) for r in rows)
 
 
 def _upsert(

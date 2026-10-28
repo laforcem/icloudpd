@@ -2,6 +2,7 @@
 
 import datetime
 import logging
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, cast
@@ -579,3 +580,36 @@ def test_delete_request_matches_delete_photo() -> None:
     new = FakeSession(FakeResponse(True, REAL_MODIFY_RESPONSE))
     assert deletion_sync.delete_asset(LOGGER, cast(PhotoLibrary, FakeLibrary(new)), photo)
     assert old.posts == new.posts
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores directory permissions"
+)
+def test_unreadable_directory_at_execution_aborts(tmp_path: Path) -> None:
+    handle = manifest.open(LOGGER, str(tmp_path / "lib"))
+    assert handle is not None
+    folder = tmp_path / "2024"
+    folder.mkdir()
+    path = str(folder / "X.JPG")
+    photo = cast(PhotoAsset, FakeAsset("X"))
+    manifest.record_seen(LOGGER, handle, "X", path, 1)
+    handle.connection.commit()
+    for seq in (1, 2):
+        scan = deletion_sync.open_scan(LOGGER, handle, False)
+        deletion_sync.judge_asset(LOGGER, scan, photo, [(path, 1)])
+        if seq == 1:
+            deletion_sync.finish_scan(
+                LOGGER, scan, threshold=-1, delete=Deleter(), notify=Notifier(), now=T0
+            )
+    assert "X" in scan.candidates
+    Path(path).write_bytes(b"x")  # back on disk, but the folder becomes unreadable
+    folder.chmod(0)
+    deleter = Deleter()
+    try:
+        with pytest.raises(deletion_sync.DeletionSyncError):
+            deletion_sync.finish_scan(
+                LOGGER, scan, threshold=-1, delete=deleter, notify=Notifier(), now=T0
+            )
+    finally:
+        folder.chmod(0o755)
+    assert deleter.calls == []
