@@ -115,6 +115,11 @@ def open_scan(
     logger: logging.Logger, handle: manifest.ManifestHandle, dry_run: bool
 ) -> DeletionScan:
     connection = handle.connection
+    if dry_run:
+        # Leave the on-disk database untouched: judge against an in-memory copy.
+        copy = sqlite3.connect(":memory:")
+        connection.backup(copy)
+        connection = copy
     ensure_schema(connection)
     if not dry_run:
         connection.execute("UPDATE deletion_state SET scan_seq = scan_seq + 1 WHERE id = 1")
@@ -210,10 +215,13 @@ def judge_asset(
             conn.commit()
         return Verdict.PROCEED
 
-    marks = conn.execute(
-        "SELECT MIN(missing_since_scan) FROM downloaded_assets WHERE record_name = ?", (rid,)
+    newest, unmarked = conn.execute(
+        "SELECT MAX(missing_since_scan), COUNT(*) - COUNT(missing_since_scan)"
+        " FROM downloaded_assets WHERE record_name = ?",
+        (rid,),
     ).fetchone()
-    mark = marks[0]
+    # Every row must carry a mark; a NULL row was never observed missing.
+    mark = None if unmarked else newest
     if mark is not None and mark <= scan.last_completed_scan_seq:
         scan.candidates[rid] = photo
         return Verdict.CANDIDATE

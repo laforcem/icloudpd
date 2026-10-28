@@ -203,15 +203,63 @@ def test_same_asset_twice_in_one_scan(tmp_path: Path, handle: manifest.ManifestH
     assert len(scan2.candidates) == 1
 
 
+def _dump(path: str) -> list[str]:
+    c = sqlite3.connect(path)
+    try:
+        return list(c.iterdump())
+    finally:
+        c.close()
+
+
 def test_dry_run_writes_nothing(tmp_path: Path, handle: manifest.ManifestHandle) -> None:
     path = str(tmp_path / "IMG_1.JPG")
     record(handle, path)
-    deletion_sync.ensure_schema(handle.connection)
-    before = list(handle.connection.iterdump())
+    db = str(tmp_path / "lib" / ".icloudpd" / "state.db")
+    before_bytes = Path(db).read_bytes()
+    before = _dump(db)
     scan = deletion_sync.open_scan(LOGGER, handle, True)
     assert scan.scan_seq == 1
     assert deletion_sync.judge_asset(LOGGER, scan, asset(), [(path, 1)]) == Verdict.SUSPECT
-    assert list(handle.connection.iterdump()) == before
+    assert Path(db).read_bytes() == before_bytes
+    assert _dump(db) == before
+
+
+def test_dry_run_leaves_legacy_db_unchanged(tmp_path: Path) -> None:
+    db = str(tmp_path / "old.db")
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE downloaded_assets (
+            record_name TEXT NOT NULL, local_path TEXT NOT NULL, size_bytes INTEGER NOT NULL,
+            checksum TEXT NULL, first_downloaded_utc TEXT NOT NULL, last_seen_utc TEXT NOT NULL,
+            PRIMARY KEY (record_name, local_path));
+        """
+    )
+    missing = str(tmp_path / "IMG_1.JPG")
+    conn.execute("INSERT INTO downloaded_assets VALUES ('REC1', ?, 1, NULL, 'a', 'b')", (missing,))
+    conn.commit()
+    before_bytes = Path(db).read_bytes()
+    h = manifest.ManifestHandle(connection=conn)
+    scan = deletion_sync.open_scan(LOGGER, h, True)
+    assert deletion_sync.judge_asset(LOGGER, scan, asset(), [(missing, 1)]) == Verdict.SUSPECT
+    conn.close()
+    assert Path(db).read_bytes() == before_bytes
+    names = {r[0] for r in sqlite3.connect(db).execute("SELECT name FROM sqlite_master")}
+    assert "deletion_items" not in names
+
+
+def test_null_mark_row_blocks_candidate(tmp_path: Path, handle: manifest.ManifestHandle) -> None:
+    a = str(tmp_path / "IMG_1.JPG")
+    b = str(tmp_path / "IMG_1.MOV")
+    record(handle, a)
+    scan1 = deletion_sync.open_scan(LOGGER, handle, False)
+    assert deletion_sync.judge_asset(LOGGER, scan1, asset(), [(a, 1)]) == Verdict.SUSPECT
+    complete(handle, 1)
+    record(handle, b)  # new row, never marked
+    scan2 = deletion_sync.open_scan(LOGGER, handle, False)
+    assert deletion_sync.judge_asset(LOGGER, scan2, asset(), [(a, 1), (b, 1)]) == Verdict.SUSPECT
+    assert missing_since(handle) == [2, 2]
+    assert not scan2.candidates
 
 
 def test_migrates_old_db(tmp_path: Path) -> None:
