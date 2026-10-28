@@ -235,6 +235,17 @@ def judge_asset(
 
 
 @_wrap_sqlite
+def mark_completed(scan: DeletionScan) -> None:
+    """Record that this scan enumerated every album to the end (no-op in dry-run)."""
+    if scan.dry_run:
+        return
+    scan.connection.execute(
+        "UPDATE deletion_state SET last_completed_scan_seq = ? WHERE id = 1", (scan.scan_seq,)
+    )
+    scan.connection.commit()
+
+
+@_wrap_sqlite
 def list_items(
     connection: sqlite3.Connection, statuses: Sequence[ItemStatus]
 ) -> list[DeletionItem]:
