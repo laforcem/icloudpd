@@ -205,15 +205,15 @@ def judge_asset(
     rid = photo.id
     write = not scan.dry_run
 
-    def clear_mark() -> None:
-        conn.execute(
+    def clear_mark() -> int:
+        return conn.execute(
             "UPDATE downloaded_assets SET missing_since_scan = NULL"
             " WHERE record_name = ? AND missing_since_scan IS NOT NULL",
             (rid,),
-        )
+        ).rowcount
 
-    def drop_item() -> None:
-        conn.execute("DELETE FROM deletion_items WHERE record_name = ?", (rid,))
+    def drop_item() -> int:
+        return conn.execute("DELETE FROM deletion_items WHERE record_name = ?", (rid,)).rowcount
 
     rows = manifest.get_all_for_asset(manifest.ManifestHandle(connection=conn), rid)
     item = conn.execute(
@@ -249,10 +249,13 @@ def judge_asset(
 
     if not fully_missing:
         if write:
-            clear_mark()
+            changed = clear_mark()
             if status == ItemStatus.FAILED.value:
-                drop_item()
-            conn.commit()
+                changed += drop_item()
+            # The common case changes nothing; committing anyway would flush the
+            # manifest's batched record_seen writes (one fsync per asset).
+            if changed:
+                conn.commit()
         return Verdict.PROCEED
 
     # Checked after the stat above: a mount that dropped before it took the
@@ -727,7 +730,9 @@ def run_command(command: DeletionCommand, user_configs: Sequence[UserConfig]) ->
     if not matches[0].directory:
         print(f"The configuration for username {command.username!r} has no directory")
         return 2
-    path = manifest.db_path(matches[0].directory, matches[0].state_directory)
+    path = manifest.db_path(
+        *manifest.library_paths(matches[0].directory, matches[0].state_directory)
+    )
     if not os.path.isfile(path):
         print("No held deletion batch")
         return 0

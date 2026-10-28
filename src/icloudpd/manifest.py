@@ -54,6 +54,19 @@ class ManifestHandle:
     pending_writes: int = 0
 
 
+def library_paths(directory: str, state_directory: str | None) -> tuple[str, str | None]:
+    """The download directory and state directory as every caller must resolve them.
+
+    One place, so the sync, its startup checks and the --resolve-deletions
+    commands always agree on which state.db belongs to an entry.
+    """
+
+    def resolve(path: str) -> str:
+        return os.path.normpath(os.path.expanduser(path))
+
+    return resolve(directory), resolve(state_directory) if state_directory else None
+
+
 def db_path(download_dir: str, state_directory: str | None) -> str:
     """Path of the manifest database for a download directory."""
     manifest_dir = state_directory if state_directory else os.path.join(download_dir, ".icloudpd")

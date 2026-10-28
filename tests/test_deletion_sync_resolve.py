@@ -345,3 +345,40 @@ def test_other_statuses_untouched(tmp_path: Path, action: str) -> None:
         .fetchall()
     )
     assert rows == [(st, "old") for st in others]
+
+
+@pytest.mark.parametrize("tilde", ["directory", "state_directory"])
+def test_resolver_expands_tilde(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tilde: str,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(tmp_path)  # a literal "~/..." would resolve under here
+    seed_dir = home / "lib"
+    seed_dir.mkdir(parents=True)
+    path = seed(seed_dir)
+    if tilde == "state_directory":
+        state = home / "st"
+        state.mkdir()
+        os.replace(path, state / "state.db")
+        path = str(state / "state.db")
+        args = ["-d", str(seed_dir), "--state-directory", "~/st"]
+    else:
+        args = ["-d", "~/lib"]
+    users = parse(["-u", "a", *args])[1]
+    assert deletion_sync.run_command(DeletionCommand("list", "a"), users) == 0
+    assert "2 held deletion(s):" in capsys.readouterr().out
+    assert deletion_sync.run_command(DeletionCommand("approve", "a"), users) == 0
+    assert statuses(path) == ["approved", "approved"]
+
+
+def test_library_paths() -> None:
+    home = os.path.expanduser("~")
+    assert manifest.library_paths("~/lib/", "~/st/../st") == (
+        os.path.join(home, "lib"),
+        os.path.join(home, "st"),
+    )
+    assert manifest.library_paths("/data//you", None) == ("/data/you", None)

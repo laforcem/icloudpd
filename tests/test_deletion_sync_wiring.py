@@ -493,3 +493,21 @@ def test_auto_delete_forgets_recently_deleted(tmp_path: Path) -> None:
     assert _known(library) == 2 * len(names)
     assert library.run(_AUTO_DELETE) == 0
     assert _known(library) == 0
+
+
+def test_tilde_directory_resolved_once_for_everything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = _listing_library(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    library.cassette = os.path.abspath(library.cassette)
+    (tmp_path / "cwd").mkdir()
+    monkeypatch.chdir(tmp_path / "cwd")  # a literal "~/data" would land under here
+    library.data_dir = os.path.join("~", "data")
+    assert library.run(_SYNC) == 0
+    library.data_dir = str(tmp_path / "data")
+    assert os.path.isfile(library.path(_DELETED))
+    assert not os.path.exists(tmp_path / "cwd" / "~")
+    with library.db() as conn:
+        stored = {r[0] for r in conn.execute("SELECT local_path FROM downloaded_assets")}
+    assert library.path(_DELETED) in stored

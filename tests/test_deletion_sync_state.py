@@ -341,3 +341,21 @@ def test_directory_at_recorded_path_counts_as_missing(
     os.mkdir(path)
     scan = deletion_sync.open_scan(LOGGER, handle, False)
     assert deletion_sync.judge_asset(LOGGER, scan, asset(), [(path, 1)]) == Verdict.SUSPECT
+
+
+def test_present_assets_do_not_commit_per_asset(
+    tmp_path: Path, handle: manifest.ManifestHandle
+) -> None:
+    paths = {f"REC{i}": make_file(tmp_path, f"IMG_{i}.JPG") for i in range(20)}
+    for rec, path in paths.items():
+        record(handle, path, rec)
+    scan = deletion_sync.open_scan(LOGGER, handle, False)
+    statements: list[str] = []
+    handle.connection.set_trace_callback(statements.append)
+    for rec, path in paths.items():
+        # The download loop's batched manifest write keeps a transaction open.
+        manifest.record_seen(LOGGER, handle, rec, path, 1)
+        verdict = deletion_sync.judge_asset(LOGGER, scan, asset(rec), [(path, 1)])
+        assert verdict == Verdict.PROCEED
+    handle.connection.set_trace_callback(None)
+    assert [s for s in statements if s.strip().upper().startswith("COMMIT")] == []

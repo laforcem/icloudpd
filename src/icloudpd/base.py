@@ -315,11 +315,10 @@ def _has_shared_deletion_db(logger: logging.Logger, user_configs: Sequence[UserC
     for user_config in user_configs:
         if not user_config.directory:
             continue
-        state_directory = (
-            os.path.expanduser(user_config.state_directory) if user_config.state_directory else None
-        )
         resolved = os.path.abspath(
-            manifest.db_path(os.path.expanduser(user_config.directory), state_directory)
+            manifest.db_path(
+                *manifest.library_paths(user_config.directory, user_config.state_directory)
+            )
         )
         other = owners.get(resolved)
         if other is None:
@@ -536,7 +535,7 @@ def _process_all_users_once(
                     download_builder,
                     logger,
                     user_config.folder_structure,
-                    user_config.directory,
+                    manifest.library_paths(user_config.directory, None)[0],
                     user_config.sizes,
                     user_config.force_size,
                     global_config.only_print_filenames,
@@ -1192,7 +1191,7 @@ def core_single_run(
         and not mount_guard.check(
             logger,
             user_config.username,
-            os.path.normpath(user_config.directory),
+            manifest.library_paths(user_config.directory, None)[0],
             str(user_config.notification_script) if user_config.notification_script else None,
         )
     ):
@@ -1282,12 +1281,8 @@ def core_single_run(
                     else:
                         pass
 
-                    directory = os.path.normpath(user_config.directory)
-
-                    state_directory = (
-                        os.path.expanduser(os.path.normpath(user_config.state_directory))
-                        if user_config.state_directory
-                        else None
+                    directory, state_directory = manifest.library_paths(
+                        user_config.directory, user_config.state_directory
                     )
                     manifest_handle = (
                         manifest.open(logger, directory, state_directory)
@@ -1570,9 +1565,7 @@ def core_single_run(
                                 lp_filename_generator,
                                 user_config.align_raw,
                                 forget=(
-                                    partial(
-                                        deletion_sync.forget_asset, manifest_handle.connection
-                                    )
+                                    partial(deletion_sync.forget_asset, manifest_handle.connection)
                                     if user_config.sync_deletions
                                     and not user_config.dry_run
                                     and manifest_handle is not None
