@@ -440,3 +440,56 @@ def test_mount_dropping_mid_scan_marks_and_deletes_nothing(tmp_path: Path) -> No
     assert library.missing_since(_DELETED) is None
     assert library.scan_state() == (2, 1)
     assert not os.path.isfile(library.path(_DELETED))
+
+
+_AUTO_DELETE = [
+    "--recent",
+    "0",
+    "--skip-videos",
+    "--auto-delete",
+    "--sync-deletions",
+    "--require-mount-marker",
+]
+
+
+def _seed(library: _Library, record_names: Sequence[str]) -> None:
+    with library.db() as conn:
+        for name in record_names:
+            conn.execute(
+                "INSERT OR REPLACE INTO downloaded_assets (record_name, local_path, size_bytes,"
+                " first_downloaded_utc, last_seen_utc) VALUES (?, ?, 1, 'a', 'b')",
+                (name, library.path(f"{name}.JPG")),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO deletion_items (record_name, filename, asset_date_utc,"
+                " detected_utc, status, status_changed_utc) VALUES (?, 'f', 'd', 'd', 'held', 'd')",
+                (name,),
+            )
+        conn.commit()
+
+
+def _known(library: _Library) -> int:
+    with library.db() as conn:
+        return int(
+            conn.execute(
+                "SELECT (SELECT COUNT(*) FROM downloaded_assets)"
+                " + (SELECT COUNT(*) FROM deletion_items)"
+            ).fetchone()[0]
+        )
+
+
+def test_auto_delete_forgets_recently_deleted(tmp_path: Path) -> None:
+    library = _Library(tmp_path, "autodelete_photos.yml")
+    library.mount()
+    with patch(
+        "icloudpd.deletion_sync.forget_asset", wraps=deletion_sync.forget_asset
+    ) as forget_asset:
+        assert library.run(_AUTO_DELETE) == 0
+    names = [c.args[1] for c in forget_asset.call_args_list]
+    assert names, "auto_delete visited no Recently Deleted records"
+
+    _seed(library, names)
+    assert library.run([*_AUTO_DELETE, "--dry-run"]) == 0
+    assert _known(library) == 2 * len(names)
+    assert library.run(_AUTO_DELETE) == 0
+    assert _known(library) == 0

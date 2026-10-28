@@ -4,14 +4,18 @@ import datetime
 import logging
 import os
 import sqlite3
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 from icloudpd import deletion_sync, manifest
+from icloudpd.autodelete import autodelete_photos
 from icloudpd.deletion_sync import Verdict
+from pyicloud_ipd.raw_policy import RawTreatmentPolicy
 from pyicloud_ipd.services.photos import PhotoAsset, PhotoLibrary
+from pyicloud_ipd.version_size import AssetVersionSize
 
 LOGGER = logging.getLogger("test_deletion_sync_breaker")
 T0 = datetime.datetime(2026, 10, 1, 12, 0, tzinfo=datetime.timezone.utc)
@@ -700,3 +704,68 @@ def test_marker_gone_before_finish_scan_executes_nothing(tmp_path: Path, thresho
     assert mlib.statuses() == {"B": "approved"}
     assert mlib.tripped() == 0
     assert mlib.completed() == 1
+
+
+class RecentlyDeletedMedia:
+    """Just enough of a PhotoAsset for autodelete_photos; no versions, so no local paths."""
+
+    def __init__(self, record_name: str) -> None:
+        self.id = record_name
+        self.filename = f"{record_name}.JPG"
+        self.created = datetime.datetime(2024, 1, 2, tzinfo=datetime.timezone.utc)
+        self.item_type = None
+
+    def versions_with_raw_policy(self, _policy: Any) -> dict[Any, Any]:
+        return {}
+
+
+class RecentlyDeletedLibrary:
+    def __init__(self, *names: str) -> None:
+        self.recently_deleted = [RecentlyDeletedMedia(n) for n in names]
+
+
+def _auto_delete(lib: Library, *names: str, dry_run: bool = False) -> None:
+    autodelete_photos(
+        LOGGER,
+        dry_run,
+        cast(PhotoLibrary, RecentlyDeletedLibrary(*names)),
+        "{:%Y}",
+        str(lib.dir),
+        [AssetVersionSize.ORIGINAL],
+        lambda name: name,
+        RawTreatmentPolicy.AS_IS,
+        forget=None if dry_run else partial(deletion_sync.forget_asset, lib.handle.connection),
+    )
+
+
+def test_auto_delete_then_restore_redownloads(lib: Library) -> None:
+    lib.add("A")  # its local file is gone: auto_delete removed it, or it never existed
+    deletion_sync.ensure_schema(lib.handle.connection)  # open_scan has run before auto_delete
+    _auto_delete(lib, "A")
+    assert lib.manifest_rows("A") == 0
+    # The user restores A from Recently Deleted; later scans visit it again.
+    deleter = Deleter()
+    for _ in range(3):
+        assert lib.scan(threshold=-1, delete=deleter) == {"A": Verdict.PROCEED}
+    assert deleter.calls == []
+    assert lib.statuses() == {}
+
+
+def test_auto_delete_forgets_items_but_keeps_deletion_record(lib: Library) -> None:
+    lib.add("H", "P", "D")
+    deletion_sync.ensure_schema(lib.handle.connection)
+    lib.add_item("H", "held")
+    lib.add_item("P", "approved")
+    lib.add_item("D", "deleted")  # counts toward the 7-day breaker window
+    _auto_delete(lib, "H", "P", "D")
+    assert lib.statuses() == {"D": "deleted"}
+    assert [lib.manifest_rows(n) for n in ("H", "P", "D")] == [0, 0, 0]
+
+
+def test_auto_delete_dry_run_forgets_nothing(lib: Library) -> None:
+    lib.add("A")
+    deletion_sync.ensure_schema(lib.handle.connection)
+    lib.add_item("A", "held")
+    _auto_delete(lib, "A", dry_run=True)
+    assert lib.manifest_rows("A") == 1
+    assert lib.statuses() == {"A": "held"}

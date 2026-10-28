@@ -1569,6 +1569,15 @@ def core_single_run(
                                 user_config.sizes,
                                 lp_filename_generator,
                                 user_config.align_raw,
+                                forget=(
+                                    partial(
+                                        deletion_sync.forget_asset, manifest_handle.connection
+                                    )
+                                    if user_config.sync_deletions
+                                    and not user_config.dry_run
+                                    and manifest_handle is not None
+                                    else None
+                                ),
                             )
                         else:
                             pass

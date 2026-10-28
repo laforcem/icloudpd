@@ -311,6 +311,27 @@ def list_items(
     ]
 
 
+@_wrap_sqlite
+def forget_asset(connection: sqlite3.Connection, record_name: str) -> None:
+    """Forget an asset that iCloud has in Recently Deleted (for auto_delete).
+
+    auto_delete removes the local files, so the asset's manifest rows would
+    otherwise look locally deleted the moment the user restores it in iCloud,
+    and deletion sync would move it straight back to Recently Deleted. A
+    `deleted` item is kept: it still counts toward the breaker's 7-day window.
+    Commits only when something was removed, so a repeat visit costs no fsync.
+    """
+    removed = connection.execute(
+        "DELETE FROM downloaded_assets WHERE record_name = ?", (record_name,)
+    ).rowcount
+    removed += connection.execute(
+        "DELETE FROM deletion_items WHERE record_name = ? AND status != ?",
+        (record_name, ItemStatus.DELETED.value),
+    ).rowcount
+    if removed:
+        connection.commit()
+
+
 NotifyFn = Callable[[str, str, dict[str, Any]], bool]  # (event_type, message, data) -> delivered
 DeleteFn = Callable[[PhotoAsset], bool]  # True only on confirmed success
 
