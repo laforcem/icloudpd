@@ -19,6 +19,8 @@ class _DefaultConfig:
     cookie_directory: str
     state_directory: str | None
     require_mount_marker: bool
+    sync_deletions: bool
+    deletion_sync_threshold: int
     sizes: Sequence[AssetVersionSize]
     live_photo_size: LivePhotoVersionSize
     recent: int | None

@@ -73,6 +73,7 @@ _USER_BOOL_FIELDS = {
     "skip_photos",
     "notification_forwarder",
     "require_mount_marker",
+    "sync_deletions",
 }
 
 

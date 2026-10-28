@@ -291,6 +291,40 @@ def _has_shared_state_directory(logger: logging.Logger, user_configs: Sequence[U
     return shared
 
 
+def _has_shared_deletion_db(logger: logging.Logger, user_configs: Sequence[UserConfig]) -> bool:
+    """Log an error and return True if deletion sync would share a state.db.
+
+    Deletion sync compares one library against one manifest; two entries on the
+    same database (e.g. the default <directory>/.icloudpd) would read each
+    other's records and could delete the wrong photos. Sharing is only an
+    error when at least one of the colliding entries syncs deletions.
+    """
+    owners: Dict[str, UserConfig] = {}
+    shared = False
+    for user_config in user_configs:
+        if not user_config.directory:
+            continue
+        state_directory = (
+            os.path.expanduser(user_config.state_directory) if user_config.state_directory else None
+        )
+        resolved = os.path.abspath(
+            manifest.db_path(os.path.expanduser(user_config.directory), state_directory)
+        )
+        other = owners.get(resolved)
+        if other is None:
+            owners[resolved] = user_config
+        elif other.sync_deletions or user_config.sync_deletions:
+            logger.error(
+                "%s and %s share the manifest database %s and at least one has sync_deletions "
+                "enabled; give each entry its own state_directory.",
+                other.username,
+                user_config.username,
+                resolved,
+            )
+            shared = True
+    return shared
+
+
 def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserConfig]) -> int:
     """Run the application with the new configuration system"""
 
@@ -299,6 +333,26 @@ def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserCon
 
     if _has_shared_state_directory(logger, user_configs):
         return 2
+
+    if _has_shared_deletion_db(logger, user_configs):
+        return 2
+
+    for user_config in user_configs:
+        if not user_config.sync_deletions:
+            continue
+        if user_config.deletion_sync_threshold == -1:
+            logger.warning(
+                "%s: sync_deletions is on with no deletion_sync_threshold; a bad run could "
+                "move any number of photos to Recently Deleted. Consider setting a cap.",
+                user_config.username,
+            )
+        if not user_config.state_directory:
+            logger.warning(
+                "%s: sync_deletions is on without state_directory; the manifest lives in the "
+                "library and is lost if the library is restored or moved. Consider a "
+                "state_directory on local disk.",
+                user_config.username,
+            )
 
     # Create shared status exchange for web server and progress tracking
     shared_status_exchange = StatusExchange()

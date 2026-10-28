@@ -77,6 +77,18 @@ def add_options_for_user(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
         default=None,
     )
     cloned.add_argument(
+        "--sync-deletions",
+        help="Move photos deleted from the local library to iCloud's Recently Deleted. Requires --require-mount-marker; not compatible with --recent or --until-found. Default: don't sync deletions",
+        action="store_true",
+        default=None,
+    )
+    cloned.add_argument(
+        "--deletion-sync-threshold",
+        help="Abort a deletion sync that would delete more than N photos from iCloud (N >= 1). Default: -1 (no limit)",
+        type=int,
+        default=None,
+    )
+    cloned.add_argument(
         "--size",
         help="Image size to download. `medium` and `thumb` will always be added as suffixes to filenames, `adjusted` and `alternative` only if conflicting, `original` never. If `adjusted` or `alternative` is specified and missing, then `original` is used. Default: original",
         choices=["original", "medium", "thumb", "adjusted", "alternative"],
@@ -515,6 +527,8 @@ def map_to_config(user_ns: argparse.Namespace) -> UserConfig:
         cookie_directory=get("cookie_directory"),
         state_directory=get("state_directory"),
         require_mount_marker=get("require_mount_marker"),
+        sync_deletions=get("sync_deletions"),
+        deletion_sync_threshold=get("deletion_sync_threshold"),
         sizes=list(map_(AssetVersionSize, foundation.unique_sequence(get("sizes")))),
         live_photo_size=LivePhotoVersionSize(get("live_photo_size")),
         recent=get("recent"),
@@ -754,6 +768,38 @@ def cli() -> int:
             print(
                 "--keep-icloud-recent-days and --delete-after-download should not be used together in one configuration"
             )
+            return 2
+
+        elif [
+            (user_ns, flag)
+            for user_ns in user_nses
+            if user_ns.sync_deletions
+            for flag, value in (
+                ("--recent", user_ns.recent),
+                ("--until-found", user_ns.until_found),
+            )
+            if value is not None
+        ]:
+            print("--sync-deletions is not compatible with --recent or --until-found")
+            return 2
+
+        elif [
+            user_ns
+            for user_ns in user_nses
+            if user_ns.sync_deletions and not user_ns.require_mount_marker
+        ]:
+            print(
+                "--sync-deletions requires --require-mount-marker (require_mount_marker) so a dropped mount is never mistaken for mass deletion"
+            )
+            return 2
+
+        elif [
+            user_ns
+            for user_ns in user_nses
+            if user_ns.deletion_sync_threshold is not None
+            and (user_ns.deletion_sync_threshold == 0 or user_ns.deletion_sync_threshold < -1)
+        ]:
+            print("--deletion-sync-threshold must be -1 (no limit) or at least 1")
             return 2
 
         elif global_ns.watch_with_interval and (
