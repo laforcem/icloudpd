@@ -341,7 +341,14 @@ def _execute(
         conn.commit()
         logger.info("Deleted %s in iCloud (moved to Recently Deleted)", photo.filename)
         return ItemStatus.DELETED
-    _upsert(conn, photo, ItemStatus.FAILED, now, via_approval)
+    if via_approval:
+        # Stay approved: the retry next scan must bypass the breaker again.
+        conn.execute(
+            "UPDATE deletion_items SET record_change_tag = ? WHERE record_name = ?",
+            (_record_change_tag(photo), rid),
+        )
+    else:
+        _upsert(conn, photo, ItemStatus.FAILED, now, via_approval)
     conn.commit()
     logger.warning("Could not delete %s in iCloud; will retry next scan", photo.filename)
     return ItemStatus.FAILED
@@ -504,9 +511,8 @@ def finish_scan(
         )
 
 
-def delete_asset(logger: logging.Logger, library_object: PhotoLibrary, photo: PhotoAsset) -> bool:
-    """Move one asset to Recently Deleted. True only if iCloud confirmed it."""
-    record_name = photo._asset_record["recordName"]
+def build_delete_request(library_object: PhotoLibrary, photo: PhotoAsset) -> tuple[str, str]:
+    """URL and JSON body of the records/modify request that moves `photo` to Recently Deleted."""
     url = (
         f"{library_object.service_endpoint}/records/modify?"
         f"{urllib.parse.urlencode(library_object.params)}"
@@ -521,7 +527,7 @@ def delete_asset(logger: logging.Logger, library_object: PhotoLibrary, photo: Ph
                     "record": {
                         "fields": {"isDeleted": {"value": 1}},
                         "recordChangeTag": photo._asset_record["recordChangeTag"],
-                        "recordName": record_name,
+                        "recordName": photo._asset_record["recordName"],
                         "recordType": "CPLAsset",
                     },
                 }
@@ -529,7 +535,14 @@ def delete_asset(logger: logging.Logger, library_object: PhotoLibrary, photo: Ph
             "zoneID": library_object.zone_id,
         }
     )
+    return url, post_data
+
+
+def delete_asset(logger: logging.Logger, library_object: PhotoLibrary, photo: PhotoAsset) -> bool:
+    """Move one asset to Recently Deleted. True only if iCloud confirmed it."""
     try:
+        record_name = photo._asset_record["recordName"]
+        url, post_data = build_delete_request(library_object, photo)
         response = library_object.session.post(
             url, data=post_data, headers={"Content-type": "application/json"}
         )

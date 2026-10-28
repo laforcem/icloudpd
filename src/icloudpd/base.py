@@ -10,7 +10,6 @@ import os
 import sys
 import time
 import typing
-import urllib
 from functools import partial, singledispatch
 from logging import Logger
 from multiprocessing import freeze_support
@@ -1123,28 +1122,7 @@ def delete_photo(
     """Delete a photo from the iCloud account."""
     clean_filename_local = filename_builder(photo)
     logger.debug("Deleting %s in iCloud...", clean_filename_local)
-    url = (
-        f"{library_object.service_endpoint}/records/modify?"
-        f"{urllib.parse.urlencode(library_object.params)}"
-    )
-    post_data = json.dumps(
-        {
-            "atomic": True,
-            "desiredKeys": ["isDeleted"],
-            "operations": [
-                {
-                    "operationType": "update",
-                    "record": {
-                        "fields": {"isDeleted": {"value": 1}},
-                        "recordChangeTag": photo._asset_record["recordChangeTag"],
-                        "recordName": photo._asset_record["recordName"],
-                        "recordType": "CPLAsset",
-                    },
-                }
-            ],
-            "zoneID": library_object.zone_id,
-        }
-    )
+    url, post_data = deletion_sync.build_delete_request(library_object, photo)
     library_object.session.post(url, data=post_data, headers={"Content-type": "application/json"})
     logger.info("Deleted %s in iCloud", clean_filename_local)
 

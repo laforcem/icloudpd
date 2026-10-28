@@ -312,6 +312,31 @@ def test_failed_delete_is_retried(lib: Library) -> None:
     assert lib.statuses() == {"A": "deleted"}
 
 
+def test_failed_approved_delete_stays_approved(lib: Library) -> None:
+    names = ["A", "B", "C"]
+    lib.add(*names)
+    deletion_sync.ensure_schema(lib.handle.connection)
+    for name in names:
+        lib.add_item(name, "approved")
+    notify = Notifier()
+    lib.scan(threshold=2, delete=Deleter(result=False), notify=notify)
+    assert lib.statuses() == {n: "approved" for n in names}
+    assert all(lib.manifest_rows(n) == 1 for n in names)
+    summary = notify.of("deletion_sync_summary")[0]
+    assert summary["failed_count"] == 3 and summary["deleted_count"] == 0
+    delete = Deleter()
+    verdicts = lib.scan(threshold=2, delete=delete)
+    assert verdicts == {n: Verdict.HELD for n in names}
+    assert sorted(delete.calls) == names
+    assert lib.statuses() == {n: "deleted" for n in names}
+    assert all(lib.via_approval(n) == 1 for n in names)
+    lib.remove_from_icloud(*names)
+    lib.candidates("NEW")
+    delete2 = Deleter()
+    lib.scan(threshold=2, delete=delete2)
+    assert delete2.calls == ["NEW"]  # the approved retries did not count toward the window
+
+
 def test_notify_failure_does_not_block(lib: Library) -> None:
     lib.candidates("A", "B")
     notify = Notifier(result=False)
@@ -433,6 +458,34 @@ def test_dry_run_below_threshold_logs_deletes(
     assert _dump(lib.db) == before
 
 
+# Observed records/modify response (tests/vcr_cassettes/download_autodelete_photos_part1.yml),
+# with recordName set to the fake asset's.
+REAL_MODIFY_RESPONSE: dict[str, Any] = {
+    "records": [
+        {
+            "recordName": "A",
+            "recordType": "CPLAsset",
+            "fields": {"isDeleted": {"value": 1, "type": "INT64"}},
+            "pluginFields": {},
+            "recordChangeTag": "1s2k",
+            "created": {
+                "timestamp": 1686106171024,
+                "userRecordName": "_cfcd54372a11173505ad48f023ba188d",
+                "deviceID": "10D26FAEB98CF62382056A6813126093E3CC11C07B3DF3BDEBC4B50A7649973B",
+            },
+            "modified": {
+                "timestamp": 1686106458410,
+                "userRecordName": "_cfcd54372a11173505ad48f023ba188d",
+                "deviceID": "2",
+            },
+            "deleted": False,
+            "expirationTime": 1689562458,
+        }
+    ],
+    "syncToken": "AQAAAAAAAURhf/////////+LxHA1AvhAx66JMCtmgB8J",
+}
+
+
 class FakeResponse:
     def __init__(self, ok: bool, body: dict[str, Any]) -> None:
         self.ok = ok
@@ -473,12 +526,21 @@ class FakeLibrary:
             FakeResponse(True, {"records": [{"recordName": "A", "serverErrorCode": "CONFLICT"}]}),
             False,
         ),
+        (FakeResponse(True, REAL_MODIFY_RESPONSE), True),
         (FakeResponse(True, {}), False),
         (FakeResponse(True, {"records": [{"recordName": "OTHER"}]}), False),
         (FakeResponse(False, {"records": []}), False),
         (ConnectionError("network down"), False),
     ],
-    ids=["clean", "server-error-code", "no-records", "other-record", "not-ok", "raises"],
+    ids=[
+        "clean",
+        "real-icloud-shape",
+        "server-error-code",
+        "no-records",
+        "other-record",
+        "not-ok",
+        "raises",
+    ],
 )
 def test_delete_asset_checks_response(response: FakeResponse | Exception, expected: bool) -> None:
     import json
@@ -496,3 +558,24 @@ def test_delete_asset_checks_response(response: FakeResponse | Exception, expect
     assert record["recordChangeTag"] == "CHANGE_TAG"
     assert record["recordName"] == "A"
     assert body["zoneID"] == {"zoneName": "PrimarySync"}
+
+
+def test_delete_asset_malformed_photo_returns_false() -> None:
+    session = FakeSession(FakeResponse(True, REAL_MODIFY_RESPONSE))
+    library = cast(PhotoLibrary, FakeLibrary(session))
+    photo = FakeAsset("A")
+    photo._asset_record = {"recordName": "A"}  # no recordChangeTag
+    assert deletion_sync.delete_asset(LOGGER, library, cast(PhotoAsset, photo)) is False
+    assert session.posts == []
+
+
+def test_delete_request_matches_delete_photo() -> None:
+    """base.delete_photo and delete_asset send the same request."""
+    from icloudpd import base
+
+    photo = cast(PhotoAsset, FakeAsset("A", tag="CHANGE_TAG"))
+    old = FakeSession(FakeResponse(True, REAL_MODIFY_RESPONSE))
+    base.delete_photo(LOGGER, cast(PhotoLibrary, FakeLibrary(old)), photo, lambda p: p.filename)
+    new = FakeSession(FakeResponse(True, REAL_MODIFY_RESPONSE))
+    assert deletion_sync.delete_asset(LOGGER, cast(PhotoLibrary, FakeLibrary(new)), photo)
+    assert old.posts == new.posts
