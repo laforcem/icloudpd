@@ -650,6 +650,24 @@ def mfa_rejected_notificator_builder(
     notifications.notify(logger, notification_script, event)
 
 
+def deletion_sync_notifier(
+    logger: logging.Logger,
+    user_config: UserConfig,
+    directory: str,
+    event_type: str,
+    message: str,
+    data: Dict[str, Any],
+) -> bool:
+    event = notifications.build_event(
+        event_type,
+        user_config.username,
+        message,
+        data | {"library": user_config.library, "directory": directory},
+    )
+    script = str(user_config.notification_script) if user_config.notification_script else None
+    return notifications.notify(logger, script, event)
+
+
 @singledispatch
 def offset_to_datetime(offset: Any) -> datetime.datetime:
     raise NotImplementedError()
@@ -1547,7 +1565,18 @@ def core_single_run(
 
                         if deletion_scan is not None and not scan_cancelled:
                             # Scan-completion hook: every album enumerated to the end.
-                            deletion_sync.mark_completed(deletion_scan)
+                            deletion_sync.finish_scan(
+                                logger,
+                                deletion_scan,
+                                threshold=user_config.deletion_sync_threshold,
+                                delete=partial(deletion_sync.delete_asset, logger, library_object),
+                                notify=partial(
+                                    deletion_sync_notifier,
+                                    logger,
+                                    user_config,
+                                    directory,
+                                ),
+                            )
 
                         if user_config.auto_delete:
                             autodelete_photos(

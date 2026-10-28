@@ -10,17 +10,20 @@ as DeletionSyncError and callers must abort the deletion pass.
 
 from __future__ import annotations
 
+import datetime
 import functools
+import json
 import logging
 import os
 import sqlite3
+import urllib.parse
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Sequence, TypeVar, cast
 
 from icloudpd import manifest
 from pyicloud_ipd.asset_version import add_suffix_to_filename
-from pyicloud_ipd.services.photos import PhotoAsset
+from pyicloud_ipd.services.photos import PhotoAsset, PhotoLibrary
 
 
 class DeletionSyncError(Exception):
@@ -235,17 +238,6 @@ def judge_asset(
 
 
 @_wrap_sqlite
-def mark_completed(scan: DeletionScan) -> None:
-    """Record that this scan enumerated every album to the end (no-op in dry-run)."""
-    if scan.dry_run:
-        return
-    scan.connection.execute(
-        "UPDATE deletion_state SET last_completed_scan_seq = ? WHERE id = 1", (scan.scan_seq,)
-    )
-    scan.connection.commit()
-
-
-@_wrap_sqlite
 def list_items(
     connection: sqlite3.Connection, statuses: Sequence[ItemStatus]
 ) -> list[DeletionItem]:
@@ -268,3 +260,298 @@ def list_items(
         )
         for r in cursor.fetchall()
     ]
+
+
+NotifyFn = Callable[[str, str, dict[str, Any]], bool]  # (event_type, message, data) -> delivered
+DeleteFn = Callable[[PhotoAsset], bool]  # True only on confirmed success
+
+EVENT_ITEMS_CAP = 50
+AUTO_DELETE_WINDOW = datetime.timedelta(days=7)
+TERMINAL_RETENTION = datetime.timedelta(days=30)
+_TERMINAL = (ItemStatus.DELETED, ItemStatus.SKIPPED_GONE, ItemStatus.SKIPPED_REAPPEARED)
+
+
+def _iso(moment: datetime.datetime) -> str:
+    return moment.astimezone(datetime.timezone.utc).isoformat()
+
+
+def _item_entry(photo: PhotoAsset) -> dict[str, str]:
+    return {"record_name": photo.id, "filename": photo.filename, "asset_date": _iso(photo.created)}
+
+
+def _capped(entries: Sequence[dict[str, str]]) -> dict[str, Any]:
+    return {"items": list(entries[:EVENT_ITEMS_CAP]), "total": len(entries)}
+
+
+def _all_absent(conn: sqlite3.Connection, record_name: str) -> bool:
+    rows = manifest.get_all_for_asset(manifest.ManifestHandle(connection=conn), record_name)
+    return not any(os.path.isfile(r.local_path) for r in rows)
+
+
+def _upsert(
+    conn: sqlite3.Connection,
+    photo: PhotoAsset,
+    status: ItemStatus,
+    now: str,
+    via_approval: int,
+) -> None:
+    conn.execute(
+        "INSERT INTO deletion_items (record_name, filename, asset_date_utc, detected_utc,"
+        " status, status_changed_utc, record_change_tag, via_approval)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT (record_name) DO UPDATE SET"
+        " filename = excluded.filename, asset_date_utc = excluded.asset_date_utc,"
+        " status = excluded.status, status_changed_utc = excluded.status_changed_utc,"
+        " record_change_tag = excluded.record_change_tag, via_approval = excluded.via_approval",
+        (
+            photo.id,
+            photo.filename,
+            _iso(photo.created),
+            now,
+            status.value,
+            now,
+            _record_change_tag(photo),
+            via_approval,
+        ),
+    )
+
+
+def _execute(
+    logger: logging.Logger,
+    conn: sqlite3.Connection,
+    photo: PhotoAsset,
+    delete: DeleteFn,
+    now: str,
+    via_approval: int,
+) -> ItemStatus:
+    """Delete one asset in iCloud and commit its outcome before returning."""
+    rid = photo.id
+    if not _all_absent(conn, rid):
+        _upsert(conn, photo, ItemStatus.SKIPPED_REAPPEARED, now, via_approval)
+        # Restart the two-scan debounce if the file goes missing again.
+        conn.execute(
+            "UPDATE downloaded_assets SET missing_since_scan = NULL WHERE record_name = ?", (rid,)
+        )
+        conn.commit()
+        logger.info("Not deleting %s: a local file has reappeared", photo.filename)
+        return ItemStatus.SKIPPED_REAPPEARED
+    if delete(photo):
+        _upsert(conn, photo, ItemStatus.DELETED, now, via_approval)
+        conn.execute("DELETE FROM downloaded_assets WHERE record_name = ?", (rid,))
+        conn.commit()
+        logger.info("Deleted %s in iCloud (moved to Recently Deleted)", photo.filename)
+        return ItemStatus.DELETED
+    _upsert(conn, photo, ItemStatus.FAILED, now, via_approval)
+    conn.commit()
+    logger.warning("Could not delete %s in iCloud; will retry next scan", photo.filename)
+    return ItemStatus.FAILED
+
+
+def _emit(
+    logger: logging.Logger, notify: NotifyFn, event_type: str, message: str, data: dict[str, Any]
+) -> None:
+    """Notifications are best-effort: never let one fail the run."""
+    try:
+        if not notify(event_type, message, data):
+            logger.warning("Could not deliver %s notification", event_type)
+    except Exception as ex:
+        logger.warning("Could not deliver %s notification: %s", event_type, ex)
+
+
+@_wrap_sqlite
+def finish_scan(
+    logger: logging.Logger,
+    scan: DeletionScan,
+    *,
+    threshold: int,
+    delete: DeleteFn,
+    notify: NotifyFn,
+    now: datetime.datetime | None = None,
+) -> None:
+    """Run after a completed scan: execute approved items, apply the breaker, notify.
+
+    Each item's outcome is committed as it happens, so an exception part-way
+    keeps the deletions already confirmed. In dry-run nothing is written and
+    neither `delete` nor `notify` is called; outcomes are only logged.
+    """
+    conn = scan.connection
+    dry = scan.dry_run
+    moment = now if now is not None else datetime.datetime.now(datetime.timezone.utc)
+    stamp = _iso(moment)
+
+    # 1. The scan enumerated every album to the end.
+    if not dry:
+        conn.execute(
+            "UPDATE deletion_state SET last_completed_scan_seq = ? WHERE id = 1", (scan.scan_seq,)
+        )
+        conn.commit()
+
+    deleted: list[PhotoAsset] = []
+    failed: list[PhotoAsset] = []
+
+    def run(photo: PhotoAsset, via_approval: int) -> None:
+        if dry:
+            if _all_absent(conn, photo.id):
+                logger.info("[DRY RUN] Would delete %s", photo.filename)
+            else:
+                logger.info("[DRY RUN] Would skip %s: a local file has reappeared", photo.filename)
+            return
+        outcome = _execute(logger, conn, photo, delete, stamp, via_approval)
+        if outcome == ItemStatus.DELETED:
+            deleted.append(photo)
+        elif outcome == ItemStatus.FAILED:
+            failed.append(photo)
+
+    # 2. Approved items bypass the breaker.
+    for item in list_items(conn, [ItemStatus.APPROVED]):
+        seen = scan.seen.get(item.record_name)
+        if seen is not None:
+            run(seen, 1)
+        elif dry:
+            logger.info("[DRY RUN] Would skip %s: no longer in iCloud", item.filename)
+        else:
+            conn.execute(
+                "UPDATE deletion_items SET status = ?, status_changed_utc = ?"
+                " WHERE record_name = ?",
+                (ItemStatus.SKIPPED_GONE.value, stamp, item.record_name),
+            )
+            conn.commit()
+            logger.info("Approved deletion of %s skipped: no longer in iCloud", item.filename)
+
+    # 3. New candidates go through the circuit breaker.
+    held = {i.record_name for i in list_items(conn, [ItemStatus.HELD])}
+    new = [photo for rid, photo in scan.candidates.items() if rid not in held]
+    if new:
+        cutoff = _iso(moment - AUTO_DELETE_WINDOW)
+        (recent,) = conn.execute(
+            "SELECT COUNT(*) FROM deletion_items"
+            " WHERE status = ? AND via_approval = 0 AND status_changed_utc >= ?",
+            (ItemStatus.DELETED.value, cutoff),
+        ).fetchone()
+        (tripped,) = conn.execute("SELECT tripped FROM deletion_state WHERE id = 1").fetchone()
+        count = len(held) + len(new) + recent
+        if threshold > 0 and (tripped or count >= threshold):
+            held_count = len(held) + len(new)
+            if dry:
+                logger.info("[DRY RUN] Would hold %d items (threshold %d)", held_count, threshold)
+            else:
+                for photo in new:
+                    _upsert(conn, photo, ItemStatus.HELD, stamp, 0)
+                conn.execute(
+                    "UPDATE deletion_state SET tripped = 1,"
+                    " tripped_utc = CASE WHEN tripped = 1 THEN tripped_utc ELSE ? END"
+                    " WHERE id = 1",
+                    (stamp,),
+                )
+                conn.commit()
+                logger.warning(
+                    "Deletion sync is holding %d items (threshold %d); nothing was deleted. "
+                    "Approve or reject them with --resolve-deletions.",
+                    held_count,
+                    threshold,
+                )
+                entries = [
+                    {
+                        "record_name": i.record_name,
+                        "filename": i.filename,
+                        "asset_date": i.asset_date_utc,
+                    }
+                    for i in list_items(conn, [ItemStatus.HELD])
+                ]
+                _emit(
+                    logger,
+                    notify,
+                    "deletion_sync_threshold_tripped",
+                    f"Deletion sync is holding {held_count} item(s) for review "
+                    f"(threshold {threshold}); nothing was deleted.",
+                    {
+                        "held_count": held_count,
+                        "new_count": len(new),
+                        "threshold": threshold,
+                        **_capped(entries),
+                    },
+                )
+        else:
+            for photo in new:
+                run(photo, 0)
+
+    if dry:
+        return
+
+    # 5. Prune terminal rows past retention.
+    placeholders = ",".join("?" for _ in _TERMINAL)
+    conn.execute(
+        f"DELETE FROM deletion_items WHERE status IN ({placeholders}) AND status_changed_utc < ?",
+        [s.value for s in _TERMINAL] + [_iso(moment - TERMINAL_RETENTION)],
+    )
+    conn.commit()
+
+    # 6. Summary.
+    if deleted or failed:
+        message = f"Deletion sync moved {len(deleted)} item(s) to iCloud Recently Deleted"
+        if failed:
+            message += f"; {len(failed)} failed and will be retried"
+        _emit(
+            logger,
+            notify,
+            "deletion_sync_summary",
+            message,
+            {
+                "deleted_count": len(deleted),
+                "failed_count": len(failed),
+                **_capped([_item_entry(p) for p in deleted]),
+            },
+        )
+
+
+def delete_asset(logger: logging.Logger, library_object: PhotoLibrary, photo: PhotoAsset) -> bool:
+    """Move one asset to Recently Deleted. True only if iCloud confirmed it."""
+    record_name = photo._asset_record["recordName"]
+    url = (
+        f"{library_object.service_endpoint}/records/modify?"
+        f"{urllib.parse.urlencode(library_object.params)}"
+    )
+    post_data = json.dumps(
+        {
+            "atomic": True,
+            "desiredKeys": ["isDeleted"],
+            "operations": [
+                {
+                    "operationType": "update",
+                    "record": {
+                        "fields": {"isDeleted": {"value": 1}},
+                        "recordChangeTag": photo._asset_record["recordChangeTag"],
+                        "recordName": record_name,
+                        "recordType": "CPLAsset",
+                    },
+                }
+            ],
+            "zoneID": library_object.zone_id,
+        }
+    )
+    try:
+        response = library_object.session.post(
+            url, data=post_data, headers={"Content-type": "application/json"}
+        )
+        if not response.ok:
+            logger.warning(
+                "Deleting %s in iCloud failed: HTTP %s", photo.filename, response.status_code
+            )
+            return False
+        records = response.json().get("records")
+        if not isinstance(records, list):
+            logger.warning("Deleting %s in iCloud: no records in the response", photo.filename)
+            return False
+        errors = [r for r in records if "serverErrorCode" in r]
+        if errors:
+            logger.warning(
+                "Deleting %s in iCloud failed: %s", photo.filename, errors[0]["serverErrorCode"]
+            )
+            return False
+        if not any(r.get("recordName") == record_name for r in records):
+            logger.warning("Deleting %s in iCloud: record not confirmed", photo.filename)
+            return False
+        return True
+    except Exception as ex:
+        logger.warning("Deleting %s in iCloud failed: %s", photo.filename, ex)
+        return False

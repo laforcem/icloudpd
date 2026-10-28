@@ -123,20 +123,40 @@ def test_deleted_file_not_redownloaded_and_becomes_candidate(tmp_path: Path) -> 
     assert library.missing_since(_DELETED) == 2
 
     completed: list[deletion_sync.DeletionScan] = []
-    real_mark = deletion_sync.mark_completed
+    real_finish = deletion_sync.finish_scan
 
-    def capture(scan: deletion_sync.DeletionScan) -> None:
+    def capture(logger: Any, scan: deletion_sync.DeletionScan, **kwargs: Any) -> None:
         completed.append(scan)
-        real_mark(scan)
+        real_finish(logger, scan, **kwargs)
 
-    with patch("icloudpd.deletion_sync.mark_completed", side_effect=capture):
+    with (
+        patch("icloudpd.deletion_sync.finish_scan", side_effect=capture),
+        patch("icloudpd.deletion_sync.delete_asset", return_value=True) as delete_asset,
+        patch("icloudpd.notifications.notify", return_value=True) as notify,
+    ):
         assert library.run(_SYNC) == 0
     assert not os.path.isfile(library.path(_DELETED))
-    with library.db() as conn:
-        assert deletion_sync.list_items(conn, list(deletion_sync.ItemStatus)) == []
     assert len(completed) == 1
     assert [p.filename for p in completed[0].candidates.values()] == ["IMG_7409.JPG"]
     assert library.scan_state() == (3, 3)
+    assert [c.args[2].filename for c in delete_asset.call_args_list] == ["IMG_7409.JPG"]
+    with library.db() as conn:
+        items = deletion_sync.list_items(conn, list(deletion_sync.ItemStatus))
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM downloaded_assets WHERE local_path = ?",
+            (library.path(_DELETED),),
+        ).fetchone()[0]
+    assert [(i.filename, i.status) for i in items] == [
+        ("IMG_7409.JPG", deletion_sync.ItemStatus.DELETED)
+    ]
+    assert rows == 0
+    events = [c.args[2] for c in notify.call_args_list]
+    summaries = [e for e in events if e.event_type == "deletion_sync_summary"]
+    assert len(summaries) == 1
+    assert summaries[0].username == "jdoe@gmail.com"
+    assert summaries[0].data["deleted_count"] == 1
+    assert summaries[0].data["library"] == "PrimarySync"
+    assert summaries[0].data["directory"] == os.path.normpath(library.data_dir)
 
 
 @pytest.mark.parametrize(
@@ -179,13 +199,16 @@ def test_variant_path_becomes_candidate(
     assert library.missing_since(recorded_path) == 2
 
     completed: list[deletion_sync.DeletionScan] = []
-    real_mark = deletion_sync.mark_completed
+    real_finish = deletion_sync.finish_scan
 
-    def capture(scan: deletion_sync.DeletionScan) -> None:
+    def capture(logger: Any, scan: deletion_sync.DeletionScan, **kwargs: Any) -> None:
         completed.append(scan)
-        real_mark(scan)
+        real_finish(logger, scan, **kwargs)
 
-    with patch("icloudpd.deletion_sync.mark_completed", side_effect=capture):
+    with (
+        patch("icloudpd.deletion_sync.finish_scan", side_effect=capture),
+        patch("icloudpd.deletion_sync.delete_asset", return_value=True),
+    ):
         assert library.run(_SYNC) == 0
     assert not os.path.isfile(library.path(recorded_path))
     assert [p.filename for p in completed[0].candidates.values()] == ["IMG_7408.JPG"]
@@ -216,10 +239,10 @@ def test_cancelled_scan_not_completed(tmp_path: Path) -> None:
     with (
         patch("icloudpd.base.StatusExchange", side_effect=make_exchange),
         patch("icloudpd.base.where_builder", side_effect=cancelling_where),
-        patch("icloudpd.deletion_sync.mark_completed") as mark_completed,
+        patch("icloudpd.deletion_sync.finish_scan") as finish_scan,
     ):
         assert library.run(_SYNC) == 0
-    mark_completed.assert_not_called()
+    finish_scan.assert_not_called()
     assert library.scan_state() == (1, 0)
 
 
@@ -295,4 +318,80 @@ def test_deletion_state_error_skips_user(tmp_path: Path) -> None:
         side_effect=deletion_sync.DeletionSyncError("open_scan: disk I/O error"),
     ):
         assert library.run(_SYNC) == 1
+    assert not os.path.isfile(library.path(_DELETED))
+
+
+def test_threshold_holds_instead_of_deleting(tmp_path: Path) -> None:
+    library = _listing_library(tmp_path)
+    sync = [*_SYNC, "--deletion-sync-threshold", "1"]
+    assert library.run(sync) == 0
+    os.remove(library.path(_DELETED))
+    assert library.run(sync) == 0
+    with (
+        patch("icloudpd.deletion_sync.delete_asset") as delete_asset,
+        patch("icloudpd.notifications.notify", return_value=True) as notify,
+    ):
+        assert library.run(sync) == 0
+    delete_asset.assert_not_called()
+    with library.db() as conn:
+        items = deletion_sync.list_items(conn, [deletion_sync.ItemStatus.HELD])
+    assert [i.filename for i in items] == ["IMG_7409.JPG"]
+    tripped = [
+        c.args[2]
+        for c in notify.call_args_list
+        if c.args[2].event_type == "deletion_sync_threshold_tripped"
+    ]
+    assert len(tripped) == 1
+    assert tripped[0].data["held_count"] == 1
+    assert tripped[0].data["library"] == "PrimarySync"
+    assert not os.path.isfile(library.path(_DELETED))
+
+
+def _deletion_state(path: str) -> dict[str, list[Any]]:
+    """Everything deletion sync owns. Excludes last_seen_utc, which the manifest refreshes
+    for existing files even in dry-run (pre-existing manifest behaviour, not deletion state)."""
+    with closing(sqlite3.connect(path)) as conn:
+        return {
+            "schema": conn.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall(),
+            "items": conn.execute("SELECT * FROM deletion_items ORDER BY record_name").fetchall(),
+            "state": conn.execute("SELECT * FROM deletion_state").fetchall(),
+            "assets": conn.execute(
+                "SELECT record_name, local_path, size_bytes, missing_since_scan"
+                " FROM downloaded_assets ORDER BY record_name, local_path"
+            ).fetchall(),
+        }
+
+
+@pytest.mark.parametrize("threshold", ["-1", "1"], ids=["would-delete", "would-hold"])
+def test_dry_run_leaves_state_db_unchanged(
+    tmp_path: Path, threshold: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    library = _listing_library(tmp_path)
+    sync = [*_SYNC, "--deletion-sync-threshold", threshold]
+    assert library.run(sync) == 0
+    os.remove(library.path(_DELETED))
+    assert library.run(sync) == 0  # suspect, scan completed: a candidate from now on
+    db = manifest.db_path(library.data_dir, None)
+    before = _deletion_state(db)
+    with (
+        patch("icloudpd.deletion_sync.delete_asset") as delete_asset,
+        patch("icloudpd.notifications.notify") as notify,
+    ):
+        for _ in range(3):
+            assert library.run([*sync, "--dry-run"]) == 0
+    delete_asset.assert_not_called()
+    assert [
+        c.args[2].event_type
+        for c in notify.call_args_list
+        if c.args[2].event_type.startswith("deletion_sync")
+    ] == []
+    expected = (
+        "[DRY RUN] Would delete IMG_7409.JPG"
+        if threshold == "-1"
+        else "[DRY RUN] Would hold 1 items (threshold 1)"
+    )
+    assert caplog.text.count(expected) == 3
+    after = _deletion_state(db)
+    assert after == before
+    assert any(row[3] == 2 for row in after["assets"])  # the suspect mark survived
     assert not os.path.isfile(library.path(_DELETED))
