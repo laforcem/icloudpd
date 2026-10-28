@@ -714,6 +714,68 @@ def skip_created_after_message(
     return f"Skipping {filename}, as it was created {photo.created}, after {target_created_date}."
 
 
+def _select_size(
+    download_size: AssetVersionSize,
+    versions: Mapping[AssetVersionSize, AssetVersion],
+    primary_sizes: Sequence[AssetVersionSize],
+    force_size: bool,
+) -> AssetVersionSize | None:
+    """Size actually downloaded for a requested size, or None to skip it."""
+    if download_size not in versions and download_size != AssetVersionSize.ORIGINAL:
+        if force_size or AssetVersionSize.ORIGINAL in primary_sizes:
+            return None  # forced size missing, or original is downloaded anyway
+        return AssetVersionSize.ORIGINAL
+    return download_size
+
+
+def _version_path(
+    photo: PhotoAsset,
+    versions: Mapping[AssetVersionSize, AssetVersion],
+    filename_overrides: Mapping[AssetVersionSize, str],
+    download_size: AssetVersionSize,
+    download_dir: str,
+    filename_builder: Callable[[PhotoAsset], str],
+    lp_filename_generator: Callable[[str], str],
+) -> tuple[AssetVersion, str, str]:
+    """Version, filename and plain download path for one selected size."""
+    version = versions[download_size]
+    filename = calculate_version_filename(
+        filename_builder(photo),
+        version,
+        download_size,
+        lp_filename_generator,
+        photo.item_type,
+        filename_overrides.get(download_size),
+    )
+    return version, filename, local_download_path(filename, download_dir)
+
+
+def _live_photo_path(
+    photo: PhotoAsset,
+    download_dir: str,
+    filename_builder: Callable[[PhotoAsset], str],
+    lp_filename_generator: Callable[[str], str],
+    live_photo_size: LivePhotoVersionSize,
+    raw_policy: RawTreatmentPolicy,
+) -> tuple[AssetVersion, str] | None:
+    """Version and plain download path of the live photo video, or None if it has none."""
+    photo_versions_with_policy = photo.versions_with_raw_policy(raw_policy)
+    if live_photo_size not in photo_versions_with_policy:
+        return None
+    version = photo_versions_with_policy[live_photo_size]
+    lp_filename = calculate_version_filename(
+        filename_builder(photo),
+        version,
+        live_photo_size,
+        lp_filename_generator,
+        photo.item_type,
+    )
+    if live_photo_size != LivePhotoVersionSize.ORIGINAL:
+        # Add size to filename if not original
+        lp_filename = add_suffix_to_filename(size_to_suffix(live_photo_size), lp_filename)
+    return version, os.path.join(download_dir, lp_filename)
+
+
 def _planned_paths(
     photo: PhotoAsset,
     versions: Mapping[AssetVersionSize, AssetVersion],
@@ -729,40 +791,35 @@ def _planned_paths(
 ) -> list[tuple[str, int]]:
     """Plain path and version size of every file download_builder would write for photo.
 
-    Mirrors the size and live-photo logic of download_builder; keep the two in step.
-    Variants (legacy -original, dedup -<size>) are derived by deletion_sync.path_variants.
+    Built from the same helpers download_builder uses. Variants (legacy -original,
+    dedup -<size>) are derived by deletion_sync.path_variants.
     """
     planned: list[tuple[str, int]] = []
-    for download_size in primary_sizes:
-        if download_size not in versions and download_size != AssetVersionSize.ORIGINAL:
-            if force_size or AssetVersionSize.ORIGINAL in primary_sizes:
-                continue
-            download_size = AssetVersionSize.ORIGINAL
-        version = versions[download_size]
-        filename = calculate_version_filename(
-            filename_builder(photo),
-            version,
+    for requested_size in primary_sizes:
+        download_size = _select_size(requested_size, versions, primary_sizes, force_size)
+        if download_size is None:
+            continue
+        version, _filename, download_path = _version_path(
+            photo,
+            versions,
+            filename_overrides,
             download_size,
+            download_dir,
+            filename_builder,
             lp_filename_generator,
-            photo.item_type,
-            filename_overrides.get(download_size),
         )
-        planned.append((local_download_path(filename, download_dir), version.size))
-
+        planned.append((download_path, version.size))
     if not skip_live_photos:
-        photo_versions_with_policy = photo.versions_with_raw_policy(raw_policy)
-        if live_photo_size in photo_versions_with_policy:
-            version = photo_versions_with_policy[live_photo_size]
-            lp_filename = calculate_version_filename(
-                filename_builder(photo),
-                version,
-                live_photo_size,
-                lp_filename_generator,
-                photo.item_type,
-            )
-            if live_photo_size != LivePhotoVersionSize.ORIGINAL:
-                lp_filename = add_suffix_to_filename(size_to_suffix(live_photo_size), lp_filename)
-            planned.append((os.path.join(download_dir, lp_filename), version.size))
+        live = _live_photo_path(
+            photo,
+            download_dir,
+            filename_builder,
+            lp_filename_generator,
+            live_photo_size,
+            raw_policy,
+        )
+        if live is not None:
+            planned.append((live[1], live[0].size))
     return planned
 
 
@@ -857,35 +914,32 @@ def download_builder(
         )
         verdict = deletion_sync.judge_asset(logger, deletion_scan, photo, planned)
         if verdict != deletion_sync.Verdict.PROCEED:
+            # counter untouched: safe because until_found is rejected with sync_deletions.
             logger.debug("%s held for deletion sync (%s)", filename_builder(photo), verdict.value)
             return False
 
-    for download_size in primary_sizes:
-        if download_size not in versions and download_size != AssetVersionSize.ORIGINAL:
+    for requested_size in primary_sizes:
+        selected_size = _select_size(requested_size, versions, primary_sizes, force_size)
+        if selected_size is None:
             if force_size:
                 error_filename = filename_builder(photo)
                 logger.error(
                     "%s size does not exist for %s. Skipping...",
-                    download_size.value,
+                    requested_size.value,
                     error_filename,
                 )
-                continue
-            if AssetVersionSize.ORIGINAL in primary_sizes:
-                continue  # that should avoid double download for original
-            download_size = AssetVersionSize.ORIGINAL
+            continue  # the else case avoids double download for original
+        download_size = selected_size
 
-        version = versions[download_size]
-        photo_filename = filename_builder(photo)
-        filename = calculate_version_filename(
-            photo_filename,
-            version,
+        version, filename, download_path = _version_path(
+            photo,
+            versions,
+            filename_overrides,
             download_size,
+            download_dir,
+            filename_builder,
             lp_filename_generator,
-            photo.item_type,
-            filename_overrides.get(download_size),
         )
-
-        download_path = local_download_path(filename, download_dir)
 
         original_download_path = None
         file_exists = os.path.isfile(download_path)
@@ -972,26 +1026,16 @@ def download_builder(
     # Also download the live photo if present
     if not skip_live_photos:
         lp_size = live_photo_size
-        photo_versions_with_policy = photo.versions_with_raw_policy(raw_policy)
-        if lp_size in photo_versions_with_policy:
-            version = photo_versions_with_policy[lp_size]
-            lp_photo_filename = filename_builder(photo)
-            lp_filename = calculate_version_filename(
-                lp_photo_filename,
-                version,
-                lp_size,
-                lp_filename_generator,
-                photo.item_type,
-            )
-            if live_photo_size != LivePhotoVersionSize.ORIGINAL:
-                # Add size to filename if not original
-                lp_filename = add_suffix_to_filename(
-                    size_to_suffix(live_photo_size),
-                    lp_filename,
-                )
-            else:
-                pass
-            lp_download_path = os.path.join(download_dir, lp_filename)
+        live = _live_photo_path(
+            photo,
+            download_dir,
+            filename_builder,
+            lp_filename_generator,
+            lp_size,
+            raw_policy,
+        )
+        if live is not None:
+            version, lp_download_path = live
 
             lp_file_exists = os.path.isfile(lp_download_path)
 

@@ -139,6 +139,58 @@ def test_deleted_file_not_redownloaded_and_becomes_candidate(tmp_path: Path) -> 
     assert library.scan_state() == (3, 3)
 
 
+@pytest.mark.parametrize(
+    ("existing", "recorded"),
+    [
+        # Default policy (name-size-dedup-with-suffix): the plain name holds a
+        # different-sized file, so the asset lives at the -<size> path.
+        (
+            [("IMG_7408.JPG", 999), ("IMG_7408-1151066.JPG", 1151066)],
+            "IMG_7408-1151066.JPG",
+        ),
+        # Legacy -original name from older icloudpd versions.
+        ([("IMG_7408-original.JPG", 1151066)], "IMG_7408-original.JPG"),
+    ],
+    ids=["dedup-suffix", "legacy-original"],
+)
+def test_variant_path_becomes_candidate(
+    tmp_path: Path, existing: list[tuple[str, int]], recorded: str
+) -> None:
+    library = _Library(tmp_path)
+    create_files(
+        library.data_dir,
+        [("2018/07/30", name, size) for name, size in existing]
+        + [("2018/07/30", "IMG_7407.JPG", 656257)],
+    )
+    library.mount()
+    recorded_path = os.path.join("2018", "07", "30", recorded)
+    assert library.run(_SYNC) == 0
+    assert library.missing_since(recorded_path) is None
+    with library.db() as conn:
+        rows = conn.execute(
+            "SELECT local_path FROM downloaded_assets WHERE local_path LIKE ?",
+            ("%IMG_7408%",),
+        ).fetchall()
+    assert rows == [(library.path(recorded_path),)]
+
+    os.remove(library.path(recorded_path))
+    # The cassette has no IMG_7408 download, so a re-download attempt would fail the run.
+    assert library.run(_SYNC) == 0
+    assert library.missing_since(recorded_path) == 2
+
+    completed: list[deletion_sync.DeletionScan] = []
+    real_mark = deletion_sync.mark_completed
+
+    def capture(scan: deletion_sync.DeletionScan) -> None:
+        completed.append(scan)
+        real_mark(scan)
+
+    with patch("icloudpd.deletion_sync.mark_completed", side_effect=capture):
+        assert library.run(_SYNC) == 0
+    assert not os.path.isfile(library.path(recorded_path))
+    assert [p.filename for p in completed[0].candidates.values()] == ["IMG_7408.JPG"]
+
+
 def test_sync_off_redownloads(tmp_path: Path) -> None:
     library = _listing_library(tmp_path)
     assert library.run(_LISTING) == 0
@@ -164,17 +216,17 @@ def test_cancelled_scan_not_completed(tmp_path: Path) -> None:
     with (
         patch("icloudpd.base.StatusExchange", side_effect=make_exchange),
         patch("icloudpd.base.where_builder", side_effect=cancelling_where),
+        patch("icloudpd.deletion_sync.mark_completed") as mark_completed,
     ):
         assert library.run(_SYNC) == 0
+    mark_completed.assert_not_called()
     assert library.scan_state() == (1, 0)
 
 
 def test_missing_marker_detects_nothing(tmp_path: Path) -> None:
     library = _listing_library(tmp_path)
     os.remove(os.path.join(library.data_dir, ".mounted"))
-    with patch(
-        "icloudpd.deletion_sync.open_scan", side_effect=AssertionError("open_scan called")
-    ) as open_scan:
+    with patch("icloudpd.deletion_sync.open_scan") as open_scan:
         assert library.run(_SYNC) != 0
     open_scan.assert_not_called()
     assert not os.path.isfile(library.path(_DELETED))
