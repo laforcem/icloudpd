@@ -13,6 +13,7 @@ from tzlocal import get_localzone
 import foundation
 from foundation.core import chain_from_iterable, compose, map_, partial_1_1, skip
 from foundation.string_utils import lower
+from icloudpd import deletion_sync
 from icloudpd.base import ensure_tzinfo, run_with_configs
 from icloudpd.config import GlobalConfig, UserConfig
 from icloudpd.config_defaults import (
@@ -26,6 +27,7 @@ from icloudpd.config_file import (
     load_config_file,
     merge_user_dict,
 )
+from icloudpd.deletion_sync import DeletionCommand
 from icloudpd.log_level import LogLevel
 from icloudpd.mfa_provider import MFAProvider
 from icloudpd.password_provider import PasswordProvider
@@ -343,6 +345,28 @@ def add_global_options(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
         "--version", help="Show the version, commit hash, and timestamp", action="store_true"
     )
     cloned.add_argument(
+        "--resolve-deletions",
+        help="Approve or reject the held deletion-sync batch for the account chosen with --for-username. Approved photos are deleted from iCloud at the end of the next sync; rejected ones re-download",
+        choices=["approve", "reject"],
+        default=None,
+    )
+    cloned.add_argument(
+        "--list-pending-deletions",
+        help="List the held deletion-sync batch for the account chosen with --for-username",
+        action="store_true",
+        default=None,
+    )
+    cloned.add_argument(
+        "--for-username",
+        help="Account (username) that --resolve-deletions / --list-pending-deletions act on",
+        default=None,
+    )
+    cloned.add_argument(
+        "--for-library",
+        help="Library of that account for --resolve-deletions / --list-pending-deletions. Default: PrimarySync",
+        default=None,
+    )
+    cloned.add_argument(
         "--use-os-locale",
         help="Use the locale of the host OS to format dates",
         action="store_true",
@@ -569,7 +593,26 @@ def map_to_global_config(global_ns: argparse.Namespace) -> GlobalConfig:
         value = getattr(global_ns, field, None)
         return value if value is not None else GLOBAL_OPTION_DEFAULTS[field]
 
+    resolve = getattr(global_ns, "resolve_deletions", None)
+    list_pending = bool(getattr(global_ns, "list_pending_deletions", None))
+    for_username = getattr(global_ns, "for_username", None)
+    deletion_command: DeletionCommand | None = None
+    if resolve or list_pending:
+        if resolve and list_pending:
+            raise argparse.ArgumentError(
+                None, "--resolve-deletions and --list-pending-deletions cannot be combined"
+            )
+        if not for_username:
+            raise argparse.ArgumentError(
+                None, "--resolve-deletions and --list-pending-deletions require --for-username"
+            )
+        deletion_command = DeletionCommand(
+            action=resolve or "list",
+            username=for_username,
+            library=getattr(global_ns, "for_library", None) or "PrimarySync",
+        )
     return GlobalConfig(
+        deletion_command=deletion_command,
         help=global_ns.help,
         version=global_ns.version,
         use_os_locale=get("use_os_locale"),
@@ -728,6 +771,8 @@ def cli() -> int:
     elif global_ns.version:
         print(foundation.version_info_formatted())
         return 0
+    elif global_ns.deletion_command is not None:
+        return deletion_sync.run_command(global_ns.deletion_command, user_nses)
     else:
         # check param compatibility
         if [user_ns for user_ns in user_nses if user_ns.skip_videos and user_ns.skip_photos]:

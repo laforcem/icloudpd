@@ -19,11 +19,14 @@ import sqlite3
 import urllib.parse
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Sequence, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence, TypeVar, cast
 
 from icloudpd import manifest
 from pyicloud_ipd.asset_version import add_suffix_to_filename
 from pyicloud_ipd.services.photos import PhotoAsset, PhotoLibrary
+
+if TYPE_CHECKING:
+    from icloudpd.config import UserConfig
 
 
 class DeletionSyncError(Exception):
@@ -568,3 +571,88 @@ def delete_asset(logger: logging.Logger, library_object: PhotoLibrary, photo: Ph
     except Exception as ex:
         logger.warning("Deleting %s in iCloud failed: %s", photo.filename, ex)
         return False
+
+
+@dataclass(frozen=True)
+class DeletionCommand:
+    action: Literal["approve", "reject", "list"]
+    username: str
+    library: str = "PrimarySync"
+
+
+_BUSY_TIMEOUT_SECONDS: float = 10
+
+
+@_wrap_sqlite
+def resolve(
+    connection: sqlite3.Connection, decision: Literal["approve", "reject"]
+) -> list[DeletionItem]:
+    """Approve or reject the held batch in one transaction; returns the items resolved."""
+    held = list_items(connection, [ItemStatus.HELD])
+    if not held:
+        return []
+    new_status = ItemStatus.APPROVED if decision == "approve" else ItemStatus.REJECTED
+    now = _iso(datetime.datetime.now(datetime.timezone.utc))
+    with connection:
+        connection.executemany(
+            "UPDATE deletion_items SET status = ?, status_changed_utc = ?"
+            " WHERE record_name = ? AND status = ?",
+            [(new_status.value, now, i.record_name, ItemStatus.HELD.value) for i in held],
+        )
+        if decision == "reject":
+            connection.executemany(
+                "UPDATE downloaded_assets SET missing_since_scan = NULL WHERE record_name = ?",
+                [(i.record_name,) for i in held],
+            )
+        connection.execute("UPDATE deletion_state SET tripped = 0, tripped_utc = NULL WHERE id = 1")
+    return held
+
+
+def run_command(command: DeletionCommand, user_configs: Sequence[UserConfig]) -> int:
+    matches = [
+        u
+        for u in user_configs
+        if u.username == command.username and u.library == command.library and u.directory
+    ]
+    if not matches:
+        print(
+            f"No configuration matches username {command.username!r}, library {command.library!r}"
+        )
+        return 2
+    if len(matches) > 1:
+        print(
+            f"{len(matches)} configurations match username {command.username!r}, "
+            f"library {command.library!r}; selection must be unique"
+        )
+        return 2
+    path = manifest.db_path(matches[0].directory, matches[0].state_directory)
+    if not os.path.isfile(path):
+        print("No held deletion batch")
+        return 0
+    connection = sqlite3.connect(path, timeout=_BUSY_TIMEOUT_SECONDS)
+    try:
+        ensure_schema(connection)
+        held = list_items(connection, [ItemStatus.HELD])
+        if not held:
+            print("No held deletion batch")
+            return 0
+        print(f"{len(held)} held deletion(s):")
+        for item in held:
+            print(f"{item.filename}  {item.asset_date_utc}")
+        if command.action == "list":
+            return 0
+        resolved = resolve(connection, "approve" if command.action == "approve" else "reject")
+        if command.action == "approve":
+            print(f"Approved {len(resolved)}; they will be deleted at the end of the next sync")
+        else:
+            print(f"Rejected {len(resolved)}; they will re-download on the next sync")
+        return 0
+    except (DeletionSyncError, sqlite3.OperationalError) as ex:
+        cause = ex.__cause__ if isinstance(ex.__cause__, sqlite3.Error) else ex
+        if "locked" in str(cause) or "busy" in str(cause):
+            print("state.db is busy (is icloudpd syncing?); try again")
+            return 1
+        print(f"Could not read or update state.db: {cause}")
+        return 1
+    finally:
+        connection.close()
