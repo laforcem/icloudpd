@@ -295,6 +295,9 @@ feature, and confirm it lands in Recently Deleted.
 
 # Part 2 — Telegram
 
+> **Superseded** by `2026-10-29-deletion-sync-part2-telegram-design.md` (rich-message review with per-photo keep,
+> session registry, multi-account control channel). Kept below for history.
+
 Builds on Part 1's state. No change to detection or the breaker.
 
 ## Control channel (new)
