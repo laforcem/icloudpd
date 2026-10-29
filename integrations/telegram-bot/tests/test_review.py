@@ -15,6 +15,7 @@ from bot.app import build_application
 from bot.config import BotConfig
 from bot.control_client import StaleBatchError, SyncingError
 from bot.mfa_waiter import MfaResultWaiter
+from bot.placeholder import PLACEHOLDER_JPEG
 from bot.review import REDRAW_FAILED_TEXT, ReviewService, pack, render, unpack
 from bot.state import ChatState
 
@@ -331,6 +332,15 @@ async def test_toggle_reuses_thumbnails_already_fetched() -> None:
     await service.on_callback(make_callback(pack(KEY, "t", 1, 3, TOKEN, "")))
     assert first == 10
     assert sum(1 for c in client.calls if c[0] == "thumbnail") == first
+
+
+def test_render_draws_the_number_on_each_tile() -> None:
+    page = make_page(1)
+    rich, _ = render(ENTRY, page, thumbs_for(page, PLACEHOLDER_JPEG))
+    tiles = [b for b in rich.blocks if b.type == "collage"][0].blocks
+    sent = [t.photo.media.data for t in tiles]
+    assert all(data != PLACEHOLDER_JPEG for data in sent)
+    assert len(set(sent)) == len(sent)  # numbered differently, so all differ
 
 
 async def test_apply_edits_final_text_no_buttons() -> None:

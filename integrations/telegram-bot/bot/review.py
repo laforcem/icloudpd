@@ -34,6 +34,7 @@ from aiogram.types import (
     RichBlockCaption,
 )
 
+from bot import overlay
 from bot.control_client import ControlClient, StaleBatchError, SyncingError
 from bot.placeholder import PLACEHOLDER_JPEG
 
@@ -109,6 +110,9 @@ def render(
         for i in items:
             data = thumbs.get(i["record_name"]) or PLACEHOLDER_JPEG
             label = f"▶ {i['number']}" if i["is_video"] else str(i["number"])
+            # Clients ignore per-tile captions in a collage, so the badge is drawn on the
+            # image; the caption stays for clients that do show it.
+            data = overlay.label(data, i["number"], i["is_video"])
             tiles.append(
                 InputRichBlockPhoto(
                     photo=InputMediaPhoto(
