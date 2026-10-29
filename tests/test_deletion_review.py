@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 import sqlite3
@@ -71,6 +72,16 @@ def test_batch_token_changes_when_batch_changes(tmp_path: Path) -> None:
     assert second != first
     add(conn, "C", status="approved")
     assert deletion_review.batch_token(conn) == second
+
+
+def test_batch_token_formula_pinned(tmp_path: Path) -> None:
+    conn = make_db(tmp_path)
+    names = ["rec-b", "REC-a", "rec-c"]
+    for n in names:
+        add(conn, n)
+    add(conn, "other", status="approved")
+    expected = hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()[:8]
+    assert deletion_review.batch_token(conn) == expected
 
 
 def test_batch_token_empty_is_blank(tmp_path: Path) -> None:

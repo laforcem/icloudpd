@@ -67,7 +67,7 @@ def batch_token(connection: sqlite3.Connection) -> str:
     ]
     if not names:
         return ""
-    return hashlib.sha256("\0".join(names).encode()).hexdigest()[:8]
+    return hashlib.sha256("\n".join(names).encode()).hexdigest()[:8]
 
 
 def _counts(connection: sqlite3.Connection) -> tuple[int, int]:
