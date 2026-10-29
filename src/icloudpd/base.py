@@ -56,6 +56,7 @@ from icloudpd.mfa_provider import MFAProvider
 from icloudpd.password_provider import PasswordProvider
 from icloudpd.paths import local_download_path, remove_unicode_chars
 from icloudpd.server import serve_app
+from icloudpd.session_registry import SessionRegistry
 from icloudpd.status import Status, StatusExchange
 from icloudpd.string_helpers import parse_timestamp_or_timedelta, truncate_middle
 from icloudpd.xmp_sidecar import generate_xmp_file
@@ -402,6 +403,9 @@ def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserCon
     # Create shared status exchange for web server and progress tracking
     shared_status_exchange = StatusExchange()
 
+    # One live iCloud session per account, shared with the control channel
+    registry = SessionRegistry()
+
     # Check if any user needs web server (webui for MFA or passwords)
     needs_web_server = global_config.mfa_provider == MFAProvider.WEBUI or any(
         provider == PasswordProvider.WEBUI for provider in global_config.password_providers
@@ -422,7 +426,9 @@ def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserCon
 
     if not watch_interval:
         # No watch mode - process each user once and exit
-        return _process_all_users_once(global_config, user_configs, logger, shared_status_exchange)
+        return _process_all_users_once(
+            global_config, user_configs, logger, shared_status_exchange, registry
+        )
     else:
         # Watch mode - infinite loop processing all users, then wait
         skip_bar = not os.environ.get("FORCE_TQDM") and (
@@ -434,7 +440,7 @@ def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserCon
         while True:
             # Process all user configs in this iteration
             result = _process_all_users_once(
-                global_config, user_configs, logger, shared_status_exchange
+                global_config, user_configs, logger, shared_status_exchange, registry
             )
 
             # If any critical operation (auth-only, list commands) succeeded, exit
@@ -478,6 +484,7 @@ def _process_all_users_once(
     user_configs: Sequence[UserConfig],
     logger: logging.Logger,
     shared_status_exchange: StatusExchange,
+    registry: SessionRegistry | None = None,
 ) -> int:
     """Process all user configs once (used by both single run and watch mode)"""
 
@@ -623,6 +630,7 @@ def _process_all_users_once(
                 notify_mfa_accepted,
                 notify_mfa_rejected,
                 lp_filename_generator,
+                registry,
             )
 
             # If any user config fails and we're not in watch mode, return the error code
@@ -1224,6 +1232,7 @@ def core_single_run(
     notify_mfa_accepted: Callable[[], None],
     notify_mfa_rejected: Callable[[str], None],
     lp_filename_generator: Callable[[str], str],
+    registry: SessionRegistry | None = None,
 ) -> int:
     """Download all iCloud photos to a local directory for a single execution (no watch loop)"""
 
@@ -1252,7 +1261,8 @@ def core_single_run(
             captured.append(response)
 
         try:
-            icloud = authenticator(
+            authenticate = partial(
+                authenticator,
                 logger,
                 global_config.domain,
                 {
@@ -1269,6 +1279,18 @@ def core_single_run(
                 user_config.cookie_directory,
                 os.environ.get("CLIENT_ID"),
             )
+            if registry is None:
+                icloud = authenticate()
+            else:
+                # Login (including any 2FA wait) runs under the account's lock so the
+                # control channel never uses the session mid-login.
+                with registry.lock(user_config.username):
+                    try:
+                        icloud = authenticate()
+                    except BaseException:
+                        registry.publish(user_config.username, None)
+                        raise
+                    registry.publish(user_config.username, icloud)
 
             # dump captured responses for debugging
             # dump_responses(logger.debug, captured_responses)

@@ -2,6 +2,7 @@ import inspect
 import json
 import logging
 import typing
+from contextlib import nullcontext
 from typing import Any, Callable, Dict, Mapping, NoReturn, Sequence
 
 from requests import Response, Session
@@ -60,8 +61,17 @@ class PyiCloudSession(Session):
 
     @override
     def request(self, method: str, url, **kwargs):  # type: ignore
-        # Charge logging to the right service endpoint
-        callee = inspect.stack()[2]
+        # Hold the account's lock (set by SessionRegistry.publish) for the whole request,
+        # including the session/cookie file writes, so concurrent users of one session
+        # never interleave.
+        lock = getattr(self.service, "request_lock", None)
+        with lock if lock is not None else nullcontext():
+            return self._request(method, url, **kwargs)
+
+    def _request(self, method: str, url, **kwargs):  # type: ignore
+        # Charge logging to the right service endpoint (skip _request, request, and the
+        # requests.Session helper such as get/post)
+        callee = inspect.stack()[3]
         module = inspect.getmodule(callee[0])
         request_logger = logging.getLogger(module.__name__).getChild("http")  # type: ignore[union-attr]
         if (

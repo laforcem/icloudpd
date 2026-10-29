@@ -4,6 +4,7 @@ import hashlib
 import http.cookiejar as cookielib
 import json
 import logging
+import threading
 import typing
 from contextlib import contextmanager
 from functools import partial
@@ -112,6 +113,8 @@ class PyiCloudService:
         self.http_timeout = http_timeout
         self.response_observer = response_observer
         self.observer_rules: Sequence[Rule] = []
+        # Set by SessionRegistry.publish; PyiCloudSession.request holds it per request.
+        self.request_lock: threading.RLock | None = None
 
         # set it when we get password
         self.password_filter: PyiCloudPasswordFilter | None = None
@@ -349,6 +352,22 @@ class PyiCloudService:
 
         LOGGER.info("Authentication completed successfully")
         LOGGER.debug(self.params)
+
+    def revalidate_token(self) -> bool:
+        """Re-validate the stored session token only; never asks for a password or 2FA.
+
+        On success refreshes account data and web service URLs and drops the cached
+        PhotosService so it is rebuilt against them.
+        """
+        try:
+            data = self._validate_token()
+        except PyiCloudAPIResponseException:
+            return False
+        self.data = data
+        self.params.update({"dsid": self.data["dsInfo"]["dsid"]})
+        self._webservices = self.data["webservices"]
+        self._photos = None
+        return True
 
     def _authenticate_with_token(self) -> None:
         """Authenticate using session token."""
