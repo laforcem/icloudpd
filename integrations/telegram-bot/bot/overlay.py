@@ -11,21 +11,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
-# Telegram crops a collage tile to about 2:3 at its tallest (seen live: 282x610 screenshots
-# lose their top and bottom), so crop first or the badge lands in the part that is cut off.
-_MIN_ASPECT = 2 / 3
-
 
 def label(data: bytes, number: int, is_video: bool) -> bytes:
     """`data` with a badge in the top-left corner; unchanged if it can't be decoded."""
     try:
         image = Image.open(io.BytesIO(data)).convert("RGBA")
         width, height = image.size
-        if width / height < _MIN_ASPECT:
-            keep = round(width / _MIN_ASPECT)
-            top_edge = (height - keep) // 2
-            image = image.crop((0, top_edge, width, top_edge + keep))
-            height = keep
         unit = max(18, min(width, height) // 7)
         font = ImageFont.load_default(size=unit)
         text = str(number)
