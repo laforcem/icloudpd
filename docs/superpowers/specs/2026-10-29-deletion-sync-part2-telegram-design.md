@@ -90,11 +90,12 @@ multi-account native from the first line, not retrofitted.
   fetch waits at most one in-flight request, never a whole scan. *(My call: per-request locking, because
   holding the lock for a whole scan would block review for hours.)*
 - The control channel never prompts for a password and never triggers 2FA. It uses the slot's session as is.
-  When iCloud rejects it (e.g. 421/450/401 on a thumbnail call) or the slot is empty, the control channel may
+  When iCloud rejects it (e.g. 421/450/401 on a thumbnail call), the control channel may
   attempt **one token-only refresh** under the account's lock: re-validate using the stored session token only,
   the same first step a scan's login takes, with no password provider and no MFA. Success → publish the refreshed
   session into the slot. Anything that would need a password or 2FA → give up, leave the slot empty, thumbnails
-  unavailable until the next scan logs in. *(User decision, 2026-10-29.)* Refresh attempts are rate-limited per
+  unavailable until the next scan logs in. An empty slot has nothing to refresh and simply means "no
+  thumbnails yet"; every process start runs a scan that fills it. *(User decision, 2026-10-29.)* Refresh attempts are rate-limited per
   account (at most one per 10 minutes, *my call*) so a broken session can't hammer Apple.
 - Context for the above: production scans once every 24 h, so reviews routinely use a session up to a day old.
   On 2026-10-29 the session/Photos cookies, written 20.4 h earlier, still had ~700 h to expiry; server-side
