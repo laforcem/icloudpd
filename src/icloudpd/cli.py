@@ -439,6 +439,19 @@ def add_global_options(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
         default=None,
     )
     cloned.add_argument(
+        "--control-token-file",
+        help="File holding the bearer token for the deletion-review control channel. "
+        "The channel is off unless this is set.",
+        type=str,
+        default=None,
+    )
+    cloned.add_argument(
+        "--control-port",
+        help="Port for the deletion-review control channel. Default: 2012",
+        type=int,
+        default=None,
+    )
+    cloned.add_argument(
         "--config",
         dest="config_path",
         help=f"Path to a YAML config file. Default: use {DEFAULT_CONFIG_PATH} if it exists, "
@@ -627,6 +640,8 @@ def map_to_global_config(global_ns: argparse.Namespace) -> GlobalConfig:
         ),
         mfa_provider=MFAProvider(get("mfa_provider")),
         webui_port=get("webui_port"),
+        control_token_file=get("control_token_file"),
+        control_port=get("control_port"),
     )
 
 
@@ -725,6 +740,8 @@ def _resolved_config_as_dicts(
         "watch_with_interval": global_config.watch_with_interval,
         "domain": global_config.domain,
         "webui_port": global_config.webui_port,
+        "control_token_file": global_config.control_token_file,
+        "control_port": global_config.control_port,
         "no_progress_bar": global_config.no_progress_bar,
         "only_print_filenames": global_config.only_print_filenames,
         "use_os_locale": global_config.use_os_locale,

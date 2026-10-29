@@ -5,6 +5,9 @@ secrets:
     file: ./secrets/telegram_allowed_chat_ids.txt
   icloudpd_webui_external_url:
     file: ./secrets/icloudpd_webui_external_url.txt
+  # Optional, deletion-sync review. One token file shared by both services.
+  icloudpd_control_token:
+    file: ./secrets/icloudpd_control_token.txt
 
 services:
   icloudpd:
@@ -19,6 +22,11 @@ services:
       - "--directory"
       - "/data"
       - "--notification-forwarder"
+      # Deletion-sync review control channel (port 2012). Don't publish it.
+      # - "--control-token-file"
+      # - "/run/secrets/icloudpd_control_token"
+    # secrets:
+    #   - icloudpd_control_token
     volumes:
       - ./data:/data
       - ./config:/home/icloudpd/.pyicloud
@@ -35,10 +43,14 @@ services:
       # session refresh needs a human at the password prompt. Distinct from
       # ICLOUDPD_BASE_URL above (that one's container-internal).
       # ICLOUDPD_WEBUI_EXTERNAL_URL_FILE: /run/secrets/icloudpd_webui_external_url
+      # Optional: deletion-sync review. Without the token file it is disabled.
+      # ICLOUDPD_CONTROL_TOKEN_FILE: /run/secrets/icloudpd_control_token
+      # ICLOUDPD_CONTROL_URL: "http://icloudpd:2012"  # default
     secrets:
       - telegram_bot_token
       - telegram_allowed_chat_ids
       # - icloudpd_webui_external_url
+      # - icloudpd_control_token
     networks:
       - icloudpd-net
 

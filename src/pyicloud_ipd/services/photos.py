@@ -300,6 +300,18 @@ class PhotoLibrary:
                 ("Apple iCloud Photo Library has not finished indexing yet"), None
             )
 
+    def lookup_masters(self, record_names: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch master records by recordName in one request; missing/errored ones are skipped."""
+        url = f"{self.service_endpoint}/records/lookup?{urlencode(self.params)}"
+        body = json.dumps(
+            {"records": [{"recordName": n} for n in record_names], "zoneID": self.zone_id}
+        )
+        response = self.session.post(url, data=body, headers={"Content-type": "text/plain"})
+        records = response.json().get("records", [])
+        return {
+            r["recordName"]: r for r in records if "serverErrorCode" not in r and "recordName" in r
+        }
+
     @property
     def albums(self) -> Dict[str, "PhotoAlbum"]:
         albums = {

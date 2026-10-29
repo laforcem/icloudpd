@@ -1,7 +1,7 @@
 # Telegram bot (unsupported)
 
 Optional sidecar that gives icloudpd remote, button-driven interaction over
-Telegram — starting with 2FA, expandable to other notification events later.
+Telegram: 2FA codes, and review of held deletion batches (deletion sync).
 
 **No maintenance commitment.** This ships because it's useful to the
 maintainer personally. If Telegram's API changes and breaks it, that's a
@@ -51,6 +51,28 @@ would need a human at a password prompt:
   "Open WebUI" deep-link button if `ICLOUDPD_WEBUI_EXTERNAL_URL_FILE` is set
   (see below).
 
+### Deletion-sync review (held batches)
+
+When deletion sync holds a batch (threshold reached), the bot sends a rich
+message per entry: numbered thumbnails (10 per page), a 🗑/💾 toggle per
+photo, Prev/Next, `✅ Delete N, keep M` and `❌ Keep all`. Deletions under the
+threshold send nothing. Deletes go out at the end of icloudpd's next completed
+sync; kept photos re-download then. `/held` re-sends a review message for every
+entry with a held batch. There are no `/approve`/`/reject` commands.
+
+If icloudpd's iCloud session can't be used when the review opens, the message
+is a numbered text list and the buttons still work. If the batch or keep marks
+changed since the message was drawn, Apply deletes nothing and redraws it.
+
+Setup: icloudpd needs `--control-token-file` (a file holding a bearer token;
+port 2012 by default, separate from the WebUI). The bot needs the same token
+in a file at `ICLOUDPD_CONTROL_TOKEN_FILE` and, if the default doesn't fit,
+`ICLOUDPD_CONTROL_URL` (default `http://icloudpd:2012`). A raw
+`ICLOUDPD_CONTROL_TOKEN` is rejected. Without the token file the bot's review
+is off. The port binds `0.0.0.0`: keep it on the Docker network, don't publish
+it. Rich messages need Telegram Bot API 10.1+ (the bot pins aiogram 3.31.0).
+See the repo README, "Deletion sync".
+
 ## Running it
 
 Secrets are files, not environment variables — see `TELEGRAM_BOT_TOKEN_FILE`/
@@ -71,6 +93,8 @@ admin panel.
 mkdir -p secrets
 echo -n "<your bot token>" > secrets/telegram_bot_token.txt
 echo -n "<comma-separated chat IDs>" > secrets/telegram_allowed_chat_ids.txt
+# Optional, for deletion-sync review; the same file feeds both services:
+openssl rand -hex 32 | tr -d '\n' > secrets/icloudpd_control_token.txt
 docker compose -f docker-compose.example.yml up
 ```
 
@@ -82,5 +106,6 @@ pytest
 ```
 
 Unit tests run without any real Telegram or icloudpd connection — everything
-network-facing is faked. For a real end-to-end pass against the live
+network-facing is faked (the review message is not run against live Telegram;
+see `docs/deletion-sync-live-test.md`, Part 2). For a real end-to-end pass against the live
 Telegram API, see `E2E_CHECKLIST.md`.

@@ -73,4 +73,6 @@ class GlobalConfig:
     password_providers: Sequence[PasswordProvider]
     mfa_provider: MFAProvider
     webui_port: int
+    control_token_file: str | None
+    control_port: int
     deletion_command: DeletionCommand | None = None

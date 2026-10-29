@@ -26,6 +26,8 @@ GLOBAL_OPTION_DEFAULTS: Dict[str, Any] = {
     "password_providers": ["parameter", "keyring", "console"],
     "mfa_provider": "console",
     "webui_port": 2011,
+    "control_token_file": None,
+    "control_port": 2012,
 }
 
 USER_OPTION_DEFAULTS: Dict[str, Any] = {

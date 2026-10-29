@@ -8,8 +8,9 @@ version = "0.1.0"
 description = "Optional, unsupported Telegram sidecar for icloudpd notifications (2FA and beyond). No maintenance commitment."
 requires-python = ">=3.10"
 dependencies = [
-    "aiogram==3.29.1",
+    "aiogram==3.31.0",
     "aiohttp==3.11.11",
+    "Pillow==12.0.0",
     "requests==2.32.3",
 ]
 

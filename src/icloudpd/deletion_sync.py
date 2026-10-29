@@ -61,6 +61,7 @@ class DeletionItem:
     status: ItemStatus
     detected_utc: str
     status_changed_utc: str
+    keep_marked: bool = False
 
 
 @dataclass
@@ -86,7 +87,8 @@ CREATE TABLE IF NOT EXISTS deletion_items (
     status             TEXT NOT NULL,
     status_changed_utc TEXT NOT NULL,
     record_change_tag  TEXT NULL,
-    via_approval       INTEGER NOT NULL DEFAULT 0
+    via_approval       INTEGER NOT NULL DEFAULT 0,
+    keep_marked        INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS deletion_state (
     id                      INTEGER PRIMARY KEY CHECK (id = 1),
@@ -142,6 +144,11 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
             "ALTER TABLE downloaded_assets ADD COLUMN missing_since_scan INTEGER NULL"
         )
     connection.executescript(_SCHEMA)
+    item_columns = [row[1] for row in connection.execute("PRAGMA table_info(deletion_items)")]
+    if "keep_marked" not in item_columns:
+        connection.execute(
+            "ALTER TABLE deletion_items ADD COLUMN keep_marked INTEGER NOT NULL DEFAULT 0"
+        )
     connection.commit()
 
 
@@ -325,9 +332,12 @@ def list_items(
     if not statuses:
         return []
     placeholders = ",".join("?" for _ in statuses)
+    # A Part 1 database, opened read-only by `--resolve-deletions list`, has no keep column.
+    columns = {r[1] for r in connection.execute("PRAGMA table_info(deletion_items)")}
+    keep = "keep_marked" if "keep_marked" in columns else "0 AS keep_marked"
     cursor = connection.execute(
-        "SELECT record_name, filename, asset_date_utc, status, detected_utc, status_changed_utc"
-        f" FROM deletion_items WHERE status IN ({placeholders}) ORDER BY detected_utc, record_name",
+        "SELECT record_name, filename, asset_date_utc, status, detected_utc, status_changed_utc,"
+        f" {keep} FROM deletion_items WHERE status IN ({placeholders}) ORDER BY detected_utc, record_name",
         [s.value for s in statuses],
     )
     return [
@@ -338,6 +348,7 @@ def list_items(
             status=ItemStatus(r[3]),
             detected_utc=r[4],
             status_changed_utc=r[5],
+            keep_marked=bool(r[6]),
         )
         for r in cursor.fetchall()
     ]
@@ -404,7 +415,8 @@ def _upsert(
         " ON CONFLICT (record_name) DO UPDATE SET"
         " filename = excluded.filename, asset_date_utc = excluded.asset_date_utc,"
         " status = excluded.status, status_changed_utc = excluded.status_changed_utc,"
-        " record_change_tag = excluded.record_change_tag, via_approval = excluded.via_approval",
+        " record_change_tag = excluded.record_change_tag, via_approval = excluded.via_approval,"
+        " keep_marked = 0",
         (
             photo.id,
             photo.filename,
@@ -529,7 +541,7 @@ def finish_scan(
             logger.info("[DRY RUN] Would skip %s: no longer in iCloud", item.filename)
         else:
             conn.execute(
-                "UPDATE deletion_items SET status = ?, status_changed_utc = ?"
+                "UPDATE deletion_items SET status = ?, status_changed_utc = ?, keep_marked = 0"
                 " WHERE record_name = ?",
                 (ItemStatus.SKIPPED_GONE.value, stamp, item.record_name),
             )
@@ -700,7 +712,55 @@ class DeletionCommand:
 _BUSY_TIMEOUT_SECONDS: float = 10
 
 
+def apply_resolution(
+    connection: sqlite3.Connection, approve: Sequence[str], reject: Sequence[str]
+) -> tuple[list[DeletionItem], list[DeletionItem]]:
+    """Approve and reject the named items, only those still held.
+
+    The caller owns the transaction (an open BEGIN IMMEDIATE) and the commit. A name in
+    both lists is rejected: keeping is the safe default in a deletion tool.
+    """
+    to_approve, to_reject = set(approve) - set(reject), set(reject)
+    now = _iso(datetime.datetime.now(datetime.timezone.utc))
+    held = list_items(connection, [ItemStatus.HELD])
+    approved = [i for i in held if i.record_name in to_approve]
+    rejected = [i for i in held if i.record_name in to_reject]
+    for items, status in ((approved, ItemStatus.APPROVED), (rejected, ItemStatus.REJECTED)):
+        connection.executemany(
+            "UPDATE deletion_items SET status = ?, status_changed_utc = ?, keep_marked = 0"
+            " WHERE record_name = ? AND status = ?",
+            [(status.value, now, i.record_name, ItemStatus.HELD.value) for i in items],
+        )
+    connection.executemany(
+        "UPDATE downloaded_assets SET missing_since_scan = NULL WHERE record_name = ?",
+        [(i.record_name,) for i in rejected],
+    )
+    (remaining,) = connection.execute(
+        "SELECT COUNT(*) FROM deletion_items WHERE status = ?", (ItemStatus.HELD.value,)
+    ).fetchone()
+    if remaining == 0:
+        connection.execute("UPDATE deletion_state SET tripped = 0, tripped_utc = NULL WHERE id = 1")
+    return approved, rejected
+
+
 @_wrap_sqlite
+def resolve_split(
+    connection: sqlite3.Connection, approve: Sequence[str], reject: Sequence[str]
+) -> tuple[list[DeletionItem], list[DeletionItem]]:
+    """Approve one set and reject another in a single write transaction.
+
+    Returns (approved, rejected): the items actually changed.
+    """
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        result = apply_resolution(connection, approve, reject)
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+    return result
+
+
 def resolve(
     connection: sqlite3.Connection,
     decision: Literal["approve", "reject"],
@@ -711,34 +771,9 @@ def resolve(
     Runs in one write transaction, so a concurrent writer cannot change the set
     between the read and the update. Returns the items actually changed.
     """
-    wanted = set(record_names)
-    new_status = ItemStatus.APPROVED if decision == "approve" else ItemStatus.REJECTED
-    now = _iso(datetime.datetime.now(datetime.timezone.utc))
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        changed = [i for i in list_items(connection, [ItemStatus.HELD]) if i.record_name in wanted]
-        connection.executemany(
-            "UPDATE deletion_items SET status = ?, status_changed_utc = ?"
-            " WHERE record_name = ? AND status = ?",
-            [(new_status.value, now, i.record_name, ItemStatus.HELD.value) for i in changed],
-        )
-        if decision == "reject":
-            connection.executemany(
-                "UPDATE downloaded_assets SET missing_since_scan = NULL WHERE record_name = ?",
-                [(i.record_name,) for i in changed],
-            )
-        (remaining,) = connection.execute(
-            "SELECT COUNT(*) FROM deletion_items WHERE status = ?", (ItemStatus.HELD.value,)
-        ).fetchone()
-        if remaining == 0:
-            connection.execute(
-                "UPDATE deletion_state SET tripped = 0, tripped_utc = NULL WHERE id = 1"
-            )
-        connection.commit()
-    except BaseException:
-        connection.rollback()
-        raise
-    return changed
+    if decision == "approve":
+        return resolve_split(connection, record_names, [])[0]
+    return resolve_split(connection, [], record_names)[1]
 
 
 def _has_table(connection: sqlite3.Connection, name: str) -> bool:

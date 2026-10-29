@@ -60,3 +60,34 @@ Result:
 - The item stays `approved` (it was approved by hand) or becomes `failed` (it went out without review) in the `deletion_items` table of `state.db`, and is retried on the next sync. `--list-pending-deletions` lists only held items, so it will not show it.
 
 On a failure, record the log lines and the date above, and do not enable `sync_deletions` on that library.
+
+## Part 2: Telegram review
+
+Nothing here is run against live Telegram or a live iCloud session in automated tests. Do these by hand before enabling review on the homelab. Setup: `control_token_file` on icloudpd, `ICLOUDPD_CONTROL_TOKEN_FILE` on the bot, a scratch entry with `deletion_sync_threshold: 1` or a small `N`, and a Bot API 10.1+ chat.
+
+1. Thumbnails: hold a batch containing at least one photo and one video. Both render in the review message on your phone (videos show `▶ N`).
+2. Paging and keep: hold more than 10 photos. Page forward and back. Mark 2 as 💾 keep. Tap `✅ Delete N, keep 2`. Run the next sync: the rest go to Recently Deleted and the 2 re-download to the local library.
+3. Bot restart: open a review message, restart the bot container, then use the buttons on the old message. They still work.
+4. Session age: open a held batch about 20 hours after the last scan. Record whether the existing session worked, needed the token-only refresh, or fell back to the text list.
+5. Video JPEG field: record which JPEG field videos carry (the thumbnail source).
+6. Two entries: hold a batch in two accounts or entries. Act on one (including `/held`). The other is untouched and the right one is deleted.
+
+Result:
+
+- Date: 2026-10-29, `malc` account, `PrimarySync`, `deletion_sync_threshold` 3 then 1, images built from `0a91702` and then the fixes below.
+- Outcome per check (pass / fail):
+  1. Thumbnails: pass after fixes. Photos, a live photo and a video rendered; the video's play icon showed. First run had 4 of 16 gray tiles (see notes).
+  2. Paging and keep: pass. 16 held on two pages, two marked keep (one on each page, both with `/` in the record name), Apply: 14 went to Recently Deleted and the 2 re-downloaded. Paging back was not reported separately.
+  3. Bot restart: pass. Buttons on the old message worked after the bot container restarted; the first tap was slower (empty thumbnail cache), later taps fast.
+  4. Session age: not measured (see below).
+  5. Video JPEG field: pass (see below).
+  6. Two entries: not tested. The second account was unavailable, and its photos are not visible to the first account's session.
+- Session age result (worked / refreshed / text): not measured. The session was only about 15 minutes old at the first review; a review opened about 20 hours after a scan still needs a try on the real stack. The fallbacks (token-only refresh on 401/421/450, then the numbered text list) are untested live.
+- Video JPEG field: `resJPEGThumbRes` (also `resJPEGMedRes`) on all three videos checked, so `thumbnail_field` picks a real JPEG for videos.
+- Notes:
+  - Fixed during the test: record names are base64 and can contain `/`, which 404ed the thumbnail and keep routes (gray tiles, and those photos could not be marked keep); `/notify` waited for the whole review message and exceeded icloudpd's 5 s forwarder timeout (false "Could not deliver" warning); every tap re-fetched all thumbnails (4 to 6 s).
+  - Telegram shows no per-photo caption inside a collage or slideshow (checked live on Bot API 10.2; only a collage-level caption and standalone photo blocks show theirs), so each thumbnail gets its number, and a play icon for videos, drawn on it. The badge is cut off in the grid for tall screenshots (Telegram crops them) and is visible in the full-size view. Cropping them first was tried and reverted: it made the message taller.
+  - A kept (rejected) photo that is deleted again before the next scan is re-downloaded once, because rejected items fall through to normal download.
+  - Not run: review while a login or 2FA is pending.
+  - Setup trap: doco-cd redeploys stopped stack containers every 5 minutes. Stopping only `icloudpd` and the bot is not enough; the live v1.2.0 container restarted mid-test and re-downloaded the deleted files. Pause doco-cd for the test window.
+  - Test containers need `TZ=America/Denver`, and a notify URL (`TELEGRAM_BOT_NOTIFY_URL`) when the bot's container name differs from `icloudpd-telegram-bot`.

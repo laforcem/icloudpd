@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -17,8 +18,17 @@ def build_notify_app(
     on_mfa_rejected: NotifyHandler,
     on_library_mount_missing: NotifyHandler,
     on_library_mount_restored: NotifyHandler,
+    on_threshold_tripped: NotifyHandler,
 ) -> web.Application:
     app = web.Application()
+    # Strong references: the event loop keeps only weak ones to running tasks.
+    background: set[asyncio.Task[None]] = set()
+
+    async def run_tripped(event: dict[str, Any]) -> None:
+        try:
+            await on_threshold_tripped(event)
+        except Exception:
+            logger.exception("Sending the deletion review failed")
 
     async def handle_notify(request: web.Request) -> web.Response:
         event = await request.json()
@@ -35,6 +45,12 @@ def build_notify_app(
             await on_library_mount_missing(event)
         elif event_type == "library_mount_restored":
             await on_library_mount_restored(event)
+        elif event_type == "deletion_sync_threshold_tripped":
+            # Building the review fetches thumbnails and can take longer than the
+            # forwarder's 5 s timeout, so answer first and send in the background.
+            task = asyncio.create_task(run_tripped(event))
+            background.add(task)
+            task.add_done_callback(background.discard)
         else:
             logger.debug("Ignoring unhandled event_type=%s", event_type)
         return web.Response(status=204)
