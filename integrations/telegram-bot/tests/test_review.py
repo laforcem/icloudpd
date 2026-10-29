@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 import pytest
 import requests
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.methods import SendRichMessage
 from aiogram.types import InlineKeyboardMarkup
 from aiohttp.test_utils import TestClient, TestServer
@@ -523,7 +523,8 @@ async def test_control_failure_during_redraw_after_toggle_answers_failure_text()
 async def test_not_modified_edit_is_ignored() -> None:
     service, bot, _ = make_service()
     error = TelegramBadRequest(
-        method=None, message="Bad Request: message is not modified"  # type: ignore[arg-type]
+        method=None,  # type: ignore[arg-type]
+        message="Bad Request: message is not modified",
     )
     bot.edit_message_text = EditFails(error)  # type: ignore[method-assign]
     cb = make_callback(pack(KEY, "p", 1, 2, TOKEN, ""))

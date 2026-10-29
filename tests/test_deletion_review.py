@@ -110,6 +110,24 @@ def test_held_page_numbers_and_order(tmp_path: Path) -> None:
     assert out.items == [] and out.pages == 3
 
 
+def test_held_page_reads_in_one_transaction(tmp_path: Path) -> None:
+    """Counts, both tokens and the rows come from one consistent snapshot."""
+    conn = make_db(tmp_path)
+    seed(conn, 3)
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+    try:
+        page = deletion_review.held_page(conn, 1)
+    finally:
+        conn.set_trace_callback(None)
+    assert page.total == 3 and len(page.items) == 3
+    assert statements[0] == "BEGIN"
+    assert statements[-1] in ("COMMIT", "ROLLBACK")
+    selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+    assert len(selects) == len(statements) - 2
+    assert not conn.in_transaction
+
+
 def test_set_keep_marks_and_counts(tmp_path: Path) -> None:
     conn = make_db(tmp_path)
     seed(conn, 3)

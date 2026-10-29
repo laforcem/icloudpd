@@ -1,18 +1,25 @@
 import dataclasses
+import http.client
 import logging
 import pathlib
 import sqlite3
+import threading
+import time
 from typing import Any, Iterator, Sequence
 from unittest.mock import patch
 
 import pytest
 import yaml as _yaml
 from flask.testing import FlaskClient
+from waitress.server import BaseWSGIServer, create_server
 
 from icloudpd import base, control, deletion_review, deletion_sync, manifest
 from icloudpd.cli import parse
 from icloudpd.config import GlobalConfig, UserConfig
 from icloudpd.session_registry import SessionRegistry
+from tests.test_deletion_review_thumbnails import MASTER
+from tests.test_deletion_review_thumbnails import _service as thumbnail_service
+from tests.test_session_registry import lock_held_elsewhere
 
 LOGGER = logging.getLogger("test_control_channel")
 TOKEN = "s3cret-token"
@@ -502,3 +509,89 @@ def test_cli_and_yaml_control_options(tmp_path: pathlib.Path) -> None:
     )
     global_config, _ = parse(["--config", str(config_path)])
     assert (global_config.control_token_file, global_config.control_port) == ("/y", 3001)
+
+
+# --- final-review fixes --------------------------------------------------------------------
+
+
+def test_thumbnail_503_when_account_lock_held_elsewhere(three: list[UserConfig]) -> None:
+    registry = SessionRegistry()
+    registry.lock_timeout = 0.2
+    service = thumbnail_service([{"S02": MASTER}])
+    service.photos.private_libraries = {"SharedSync-X": service.photos}
+    registry.publish("a", service)
+    client = _client(three, registry)
+    url = f"/v1/entries/{_key(three[1])}/held/S02/thumbnail"
+    with lock_held_elsewhere(registry, "a"):
+        started = time.monotonic()
+        response = client.get(url, headers=AUTH)
+        assert time.monotonic() - started < 2
+    assert response.status_code == 503
+    assert response.get_json() == {"reason": "thumbnail_unavailable"}
+    service.session.get.assert_not_called()
+    # once the lock is free, the same request is served
+    response = client.get(url, headers=AUTH)
+    assert response.status_code == 200 and response.data == b"JPEG"
+
+
+@pytest.mark.parametrize("bad", ["²", "٣", "1²"])
+def test_held_non_ascii_digit_page_is_400(three: list[UserConfig], bad: str) -> None:
+    client = _client(three)
+    response = client.get(
+        f"/v1/entries/{_key(three[0])}/held", query_string={"page": bad}, headers=AUTH
+    )
+    assert response.status_code == 400
+    assert response.get_json() == {"reason": "bad_page"}
+
+
+def test_serve_control_bounds_threads_and_body_size(three: list[UserConfig]) -> None:
+    with patch.object(control.waitress, "serve") as serve:
+        control.serve_control(LOGGER, TOKEN, three, SessionRegistry(), "127.0.0.1", 3456)
+    kwargs = serve.call_args.kwargs
+    assert (kwargs["host"], kwargs["port"]) == ("127.0.0.1", 3456)
+    assert kwargs["threads"] == 8
+    assert kwargs["max_request_body_size"] == 16384
+
+
+def test_oversized_body_rejected_by_waitress_413(three: list[UserConfig]) -> None:
+    with patch.object(control.waitress, "serve") as serve:
+        control.serve_control(LOGGER, TOKEN, three, SessionRegistry(), "127.0.0.1", 0)
+    app = serve.call_args.args[0]
+    options = {k: v for k, v in serve.call_args.kwargs.items() if k not in ("host", "port")}
+    server = create_server(app, host="127.0.0.1", port=0, **options)
+    assert isinstance(server, BaseWSGIServer)
+    runner = threading.Thread(target=server.run, daemon=True)
+    runner.start()
+    try:
+        port = int(server.getsockname()[1])
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            connection.request("POST", f"/v1/entries/{_key(three[0])}/resolve", body=b"x" * 20000)
+            assert connection.getresponse().status == 413
+        finally:
+            connection.close()
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            connection.request("GET", "/v1/entries", headers=AUTH)
+            assert connection.getresponse().status == 200
+        finally:
+            connection.close()
+    finally:
+        server.close()
+        runner.join(5)
+    assert set(_statuses(three[0]).values()) == {"held"}
+
+
+def test_serve_control_failure_is_logged(
+    three: list[UserConfig], caplog: pytest.LogCaptureFixture
+) -> None:
+    with (
+        patch.object(control.waitress, "serve", side_effect=OSError(98, "Address in use")),
+        caplog.at_level(logging.ERROR),
+    ):
+        control.serve_control(LOGGER, TOKEN, three, SessionRegistry(), "127.0.0.1", 3456)
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert "control channel" in errors[0].getMessage()
+    assert "Address in use" in errors[0].getMessage()
+    assert TOKEN not in caplog.text

@@ -2,9 +2,10 @@
 
 The batch token (a hash of the held record names) lets a writer prove it acted
 on the batch the user saw; the keep token (a hash of the names marked keep) does
-the same for the marks, so Apply cannot act on marks changed from another view. It is checked inside the write transaction, so a scan
-that adds or removes a held item between the page view and the tap cannot slip
-through.
+the same for the marks, so Apply cannot act on marks changed from another view.
+Each write checks its tokens inside its write transaction, so a scan that adds
+or removes a held item, or a keep toggle from another view, between the page
+view and the tap cannot slip through.
 """
 
 from __future__ import annotations
@@ -109,21 +110,26 @@ def _counts(connection: sqlite3.Connection) -> tuple[int, int]:
 
 
 def held_page(connection: sqlite3.Connection, page: int) -> ReviewPage:
+    """One page of the held batch; counts, both tokens and rows share one read transaction."""
     try:
-        total, kept = _counts(connection)
-        token = batch_token(connection)
-        marks = keep_token(connection)
-        pages = max(1, -(-total // PAGE_SIZE)) if total else 0
-        offset = (page - 1) * PAGE_SIZE
-        rows = (
-            connection.execute(
-                "SELECT record_name, filename, asset_date_utc, keep_marked FROM deletion_items"
-                " WHERE status = ? ORDER BY detected_utc, record_name LIMIT ? OFFSET ?",
-                (_HELD, PAGE_SIZE, offset),
-            ).fetchall()
-            if page >= 1
-            else []
-        )
+        connection.execute("BEGIN")
+        try:
+            total, kept = _counts(connection)
+            token = batch_token(connection)
+            marks = keep_token(connection)
+            pages = max(1, -(-total // PAGE_SIZE)) if total else 0
+            offset = (page - 1) * PAGE_SIZE
+            rows = (
+                connection.execute(
+                    "SELECT record_name, filename, asset_date_utc, keep_marked FROM deletion_items"
+                    " WHERE status = ? ORDER BY detected_utc, record_name LIMIT ? OFFSET ?",
+                    (_HELD, PAGE_SIZE, offset),
+                ).fetchall()
+                if page >= 1
+                else []
+            )
+        finally:
+            connection.rollback()  # read-only: ends the snapshot
     except sqlite3.Error as ex:
         raise DeletionSyncError(f"held_page: {ex}") from ex
     items = [
@@ -251,8 +257,22 @@ def fetch_thumbnail(
 ) -> bytes | None:
     """JPEG bytes for a held photo using the account's live session, or None.
 
-    Never prompts for a password or 2FA; None means "show a placeholder".
+    Never prompts for a password or 2FA; None means "show a placeholder". A login holds
+    the account's lock (perhaps waiting for 2FA), so the lock is taken with
+    `registry.lock_timeout` up front: a worker thread never blocks on it for longer.
     """
+    lock = registry.lock(username)
+    if not lock.acquire(timeout=registry.lock_timeout):
+        return None
+    try:
+        return _fetch_thumbnail_locked(registry, username, library, record_name, now)
+    finally:
+        lock.release()
+
+
+def _fetch_thumbnail_locked(
+    registry: SessionRegistry, username: str, library: str, record_name: str, now: float
+) -> bytes | None:
     try:
         service = registry.get(username) or registry.refresh(username, now)
     except _NETWORK_ERRORS:

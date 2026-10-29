@@ -332,9 +332,12 @@ def list_items(
     if not statuses:
         return []
     placeholders = ",".join("?" for _ in statuses)
+    # A Part 1 database, opened read-only by `--resolve-deletions list`, has no keep column.
+    columns = {r[1] for r in connection.execute("PRAGMA table_info(deletion_items)")}
+    keep = "keep_marked" if "keep_marked" in columns else "0 AS keep_marked"
     cursor = connection.execute(
         "SELECT record_name, filename, asset_date_utc, status, detected_utc, status_changed_utc,"
-        f" keep_marked FROM deletion_items WHERE status IN ({placeholders}) ORDER BY detected_utc, record_name",
+        f" {keep} FROM deletion_items WHERE status IN ({placeholders}) ORDER BY detected_utc, record_name",
         [s.value for s in statuses],
     )
     return [
@@ -714,9 +717,10 @@ def apply_resolution(
 ) -> tuple[list[DeletionItem], list[DeletionItem]]:
     """Approve and reject the named items, only those still held.
 
-    The caller owns the transaction (an open BEGIN IMMEDIATE) and the commit.
+    The caller owns the transaction (an open BEGIN IMMEDIATE) and the commit. A name in
+    both lists is rejected: keeping is the safe default in a deletion tool.
     """
-    to_approve, to_reject = set(approve), set(reject) - set(approve)
+    to_approve, to_reject = set(approve) - set(reject), set(reject)
     now = _iso(datetime.datetime.now(datetime.timezone.utc))
     held = list_items(connection, [ItemStatus.HELD])
     approved = [i for i in held if i.record_name in to_approve]

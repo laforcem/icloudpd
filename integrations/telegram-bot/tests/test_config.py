@@ -1,7 +1,6 @@
 import pathlib
 
 import pytest
-
 from bot.config import BotConfigError, load_config
 
 

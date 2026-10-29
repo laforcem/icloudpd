@@ -27,6 +27,10 @@ from icloudpd.deletion_sync import DeletionSyncError, ItemStatus
 from icloudpd.session_registry import SessionRegistry
 
 _VIDEO_EXTENSIONS = (".mov", ".mp4", ".m4v")
+# A page of thumbnails is fetched in parallel; spare threads keep the other routes answering.
+CONTROL_THREADS = 8
+# Waitress buffers a body before Flask's auth check runs; the request bodies are tiny JSON.
+MAX_REQUEST_BODY_BYTES = 16384
 
 
 class EntryKeyCollision(ValueError):
@@ -173,7 +177,7 @@ def build_control_app(
         if e is None:
             return _reason(404, "not_found")
         raw_page = request.args.get("page", "1")
-        if not raw_page.isdigit() or int(raw_page) < 1:
+        if not (raw_page.isascii() and raw_page.isdecimal()) or int(raw_page) < 1:
             return _reason(400, "bad_page")
         page_number = int(raw_page)
         with _connect(e.db_path) as conn:
@@ -323,4 +327,13 @@ def serve_control(
     port: int = 2012,
 ) -> None:
     logger.info("Deletion-review control channel listening on port %d", port)
-    waitress.serve(build_control_app(logger, token, user_configs, registry), host=host, port=port)
+    try:
+        waitress.serve(
+            build_control_app(logger, token, user_configs, registry),
+            host=host,
+            port=port,
+            threads=CONTROL_THREADS,
+            max_request_body_size=MAX_REQUEST_BODY_BYTES,
+        )
+    except Exception as ex:
+        logger.error("Deletion-review control channel stopped: %s", ex)

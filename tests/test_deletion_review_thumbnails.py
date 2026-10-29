@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -12,6 +13,7 @@ from pyicloud_ipd.exceptions import (
     PyiCloudConnectionErrorException,
 )
 from pyicloud_ipd.services.photos import PhotoLibrary
+from tests.test_session_registry import lock_held_elsewhere
 
 
 def _library(records: list[dict[str, Any]]) -> tuple[PhotoLibrary, MagicMock]:
@@ -177,3 +179,17 @@ def test_fetch_thumbnail_pyicloud_connection_error_returns_none() -> None:
     service = _service([PyiCloudConnectionErrorException("down")])
     r.publish("u", service)
     assert deletion_review.fetch_thumbnail(r, "u", "", "R", 1000.0) is None
+
+
+def test_fetch_thumbnail_gives_up_when_lock_held_elsewhere() -> None:
+    r = SessionRegistry()
+    r.lock_timeout = 0.2
+    service = _service([{"R": MASTER}])
+    r.publish("u", service)
+    with lock_held_elsewhere(r, "u"):
+        started = time.monotonic()
+        assert deletion_review.fetch_thumbnail(r, "u", "", "R", 1000.0) is None
+        assert time.monotonic() - started < 2
+    service.photos.lookup_masters.assert_not_called()
+    service.session.get.assert_not_called()
+    service.revalidate_token.assert_not_called()

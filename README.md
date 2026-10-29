@@ -116,7 +116,7 @@ icloudpd --username you@icloud.com --directory /data/shared --state-directory /s
 
 - The message shows numbered thumbnails, 10 per page, with Prev/Next. Each photo has a 🗑/💾 toggle (💾 = keep). `✅ Delete N, keep M` applies; `❌ Keep all` rejects the whole batch.
 - Deletes go out at the end of the next completed sync, not immediately. A kept photo re-downloads to the local library on that sync.
-- Apply acts only on what the message showed. If the batch or the keep marks changed since the message was drawn, nothing is deleted and the message is redrawn.
+- Apply covers the whole held batch: every photo not marked keep, on every page, not only the page on screen. The button shows the count. If the batch or the keep marks changed since the message was drawn, nothing is deleted and the message is redrawn.
 - `/held` re-sends a review message for every entry that has a held batch. There are no `/approve` or `/reject` commands: approving by command would act on photos you never saw.
 - If icloudpd's iCloud session can't be used when the review opens, the message is a numbered text list (filename and date) and the buttons still work. Thumbnails return after the next successful scan login.
 

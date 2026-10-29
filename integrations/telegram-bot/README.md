@@ -1,7 +1,7 @@
 # Telegram bot (unsupported)
 
 Optional sidecar that gives icloudpd remote, button-driven interaction over
-Telegram — starting with 2FA, expandable to other notification events later.
+Telegram: 2FA codes, and review of held deletion batches (deletion sync).
 
 **No maintenance commitment.** This ships because it's useful to the
 maintainer personally. If Telegram's API changes and breaks it, that's a

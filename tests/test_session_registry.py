@@ -1,9 +1,11 @@
+import contextlib
 import dataclasses
 import logging
 import os
 import threading
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from unittest.mock import MagicMock, patch
 
 from requests import Response
@@ -257,3 +259,39 @@ def test_core_single_run_auth_failure_clears_slot() -> None:
         )
     assert code == 1
     assert r.get(user_config.username) is None
+
+
+@contextlib.contextmanager
+def lock_held_elsewhere(r: SessionRegistry, username: str) -> Iterator[None]:
+    """Hold the account lock on another thread, as a login waiting for 2FA does."""
+    held, release = threading.Event(), threading.Event()
+
+    def holder() -> None:
+        with r.lock(username):
+            held.set()
+            release.wait(10)
+
+    t = threading.Thread(target=holder, daemon=True)
+    t.start()
+    assert held.wait(5)
+    try:
+        yield
+    finally:
+        release.set()
+        t.join(5)
+
+
+def test_refresh_gives_up_when_lock_held_elsewhere() -> None:
+    r = SessionRegistry()
+    r.lock_timeout = 0.2
+    service = _service()
+    service.revalidate_token.return_value = True
+    r.publish("a", service)
+    with lock_held_elsewhere(r, "a"):
+        started = time.monotonic()
+        assert r.refresh("a", now=1000.0) is None
+        assert time.monotonic() - started < 2
+    service.revalidate_token.assert_not_called()
+    assert r.get("a") is service
+    # the failed attempt did not use up the rate-limit slot
+    assert r.refresh("a", now=1000.0) is service

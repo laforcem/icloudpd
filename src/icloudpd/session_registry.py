@@ -2,7 +2,9 @@
 
 Scans publish the service they authenticated; the control channel reads it. Every
 HTTP request a published service makes holds the account's RLock, so a control
-request waits for at most one in-flight scan request, never a whole scan.
+request waits for at most one in-flight scan request, never a whole scan. A login holds
+the lock throughout, 2FA wait included, so control-side callers acquire it with a
+timeout (`lock_timeout`) and give up rather than tie up a worker thread.
 """
 
 import threading
@@ -12,10 +14,12 @@ from pyicloud_ipd.base import PyiCloudService
 from pyicloud_ipd.exceptions import PyiCloud2SARequiredException
 
 REFRESH_INTERVAL_SECONDS = 600.0
+LOCK_TIMEOUT_SECONDS = 5.0
 
 
 class SessionRegistry:
     def __init__(self) -> None:
+        self.lock_timeout = LOCK_TIMEOUT_SECONDS
         self._guard = threading.Lock()
         self._locks: Dict[str, threading.RLock] = {}
         self._services: Dict[str, PyiCloudService] = {}
@@ -49,10 +53,14 @@ class SessionRegistry:
     def refresh(self, username: str, now: float) -> PyiCloudService | None:
         """Token-only revalidation of the slot's session; never prompts for a password or 2FA.
 
-        Returns None without calling Apple when the slot is empty or the last attempt for
-        this account was less than REFRESH_INTERVAL_SECONDS before `now`.
+        Returns None without calling Apple when the slot is empty, the last attempt for
+        this account was less than REFRESH_INTERVAL_SECONDS before `now`, or the account's
+        lock stays held elsewhere (a login, perhaps waiting for 2FA) for `lock_timeout`.
         """
-        with self.lock(username):
+        lock = self.lock(username)
+        if not lock.acquire(timeout=self.lock_timeout):
+            return None
+        try:
             service = self.get(username)
             if service is None:
                 return None
@@ -69,3 +77,5 @@ class SessionRegistry:
                 return service
             self.publish(username, None)
             return None
+        finally:
+            lock.release()

@@ -383,3 +383,58 @@ def test_library_paths() -> None:
         os.path.join(home, "st"),
     )
     assert manifest.library_paths("/data//you", None) == ("/data/you", None)
+
+
+def seed_part1(directory: Path) -> str:
+    """A held batch in a Part 1 database: deletion_items has no keep_marked column."""
+    path = seed(directory)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("ALTER TABLE deletion_items DROP COLUMN keep_marked")
+        conn.commit()
+    finally:
+        conn.close()
+    return path
+
+
+def columns(path: str) -> list[str]:
+    conn = sqlite3.connect(path)
+    try:
+        return [r[1] for r in conn.execute("PRAGMA table_info(deletion_items)")]
+    finally:
+        conn.close()
+
+
+def test_list_works_on_part1_db_without_migrating(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = seed_part1(tmp_path)
+    before = Path(path).read_bytes()
+    code = deletion_sync.run_command(DeletionCommand("list", "a", "PrimarySync"), [user(tmp_path)])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "2 held deletion(s):" in out
+    assert "REC1.JPG" in out and "REC2.JPG" in out
+    assert Path(path).read_bytes() == before
+    assert "keep_marked" not in columns(path)
+
+
+@pytest.mark.parametrize("action,status", [("approve", "approved"), ("reject", "rejected")])
+def test_approve_and_reject_work_on_part1_db(tmp_path: Path, action: str, status: str) -> None:
+    path = seed_part1(tmp_path)
+    command = DeletionCommand(action, "a", "PrimarySync")  # type: ignore[arg-type]
+    assert deletion_sync.run_command(command, [user(tmp_path)]) == 0
+    assert statuses(path) == [status, status]
+
+
+def test_resolve_split_overlap_rejects(tmp_path: Path) -> None:
+    """A name in both lists is rejected: the safe choice in a deletion tool."""
+    path = seed(tmp_path)
+    conn = sqlite3.connect(path)
+    try:
+        approved, rejected = deletion_sync.resolve_split(conn, ["REC1", "REC2"], ["REC1"])
+    finally:
+        conn.close()
+    assert [i.record_name for i in approved] == ["REC2"]
+    assert [i.record_name for i in rejected] == ["REC1"]
+    assert statuses(path) == ["rejected", "approved"]
