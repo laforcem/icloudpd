@@ -3,7 +3,9 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+import requests
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.methods import SendRichMessage
 from aiogram.types import InlineKeyboardMarkup
@@ -12,7 +14,7 @@ from bot.app import build_application
 from bot.config import BotConfig
 from bot.control_client import StaleBatchError, SyncingError
 from bot.mfa_waiter import MfaResultWaiter
-from bot.review import ReviewService, pack, render, unpack
+from bot.review import REDRAW_FAILED_TEXT, ReviewService, pack, render, unpack
 from bot.state import ChatState
 
 CHAT = 111
@@ -34,12 +36,17 @@ STALE_TEXT = "The batch changed, nothing was deleted. Here's the updated batch."
 
 
 def make_page(
-    page: int = 1, total: int = 23, kept: tuple[int, ...] = (), token: str = TOKEN
+    page: int = 1,
+    total: int = 23,
+    kept: tuple[int, ...] = (),
+    token: str = TOKEN,
+    keep_token: str | None = None,
 ) -> dict[str, Any]:
     pages = -(-total // 10)
     numbers = range((page - 1) * 10 + 1, min(page * 10, total) + 1)
     return {
         "batch_token": token,
+        "keep_token": keep_token if keep_token is not None else (f"k{len(kept)}" if kept else ""),
         "page": page,
         "pages": pages,
         "total": total,
@@ -89,8 +96,10 @@ class FakeControlClient:
             raise self.raise_on["set_keep"]
         return {"total": 23, "kept_count": 1}
 
-    def resolve(self, key: str, action: str, token: str) -> dict[str, Any]:
-        self.calls.append(("resolve", key, action, token))
+    def resolve(
+        self, key: str, action: str, token: str, keep_token: str | None = None
+    ) -> dict[str, Any]:
+        self.calls.append(("resolve", key, action, token, keep_token))
         if "resolve" in self.raise_on:
             raise self.raise_on["resolve"]
         return self.resolve_result
@@ -153,15 +162,30 @@ def make_service(
 
 
 def test_pack_unpack_roundtrip() -> None:
-    data = pack(KEY, "t", 2, 13, TOKEN)
-    assert data == f"ds:{KEY}:t:2:13:{TOKEN}"
+    data = pack(KEY, "t", 2, 13, TOKEN, "ab12cd34")
+    assert data == f"ds:{KEY}:t:2:13:{TOKEN}:ab12cd34"
     cb = unpack(data)
-    assert (cb.key, cb.op, cb.page, cb.arg, cb.token) == (KEY, "t", 2, 13, TOKEN)
+    assert (cb.key, cb.op, cb.page, cb.arg, cb.token, cb.keep_token) == (
+        KEY,
+        "t",
+        2,
+        13,
+        TOKEN,
+        "ab12cd34",
+    )
+    assert unpack(pack(KEY, "a", 1, 0, TOKEN, "")).keep_token == ""
 
 
 @pytest.mark.parametrize(
     "bad",
-    ["", "ds:x", "xx:abcd1234:t:1:1:tok", f"ds:{KEY}:z:1:1:{TOKEN}", f"ds:{KEY}:t:a:1:{TOKEN}"],
+    [
+        "",
+        "ds:x",
+        "xx:abcd1234:t:1:1:tok:",
+        f"ds:{KEY}:z:1:1:{TOKEN}:",
+        f"ds:{KEY}:t:a:1:{TOKEN}:",
+        f"ds:{KEY}:t:1:1:{TOKEN}",
+    ],
 )
 def test_unpack_rejects_garbage(bad: str) -> None:
     with pytest.raises(ValueError):
@@ -174,7 +198,7 @@ def test_pack_rejects_unknown_op() -> None:
 
 
 def test_callback_data_max_length() -> None:
-    assert len(pack("a" * 8, "t", 999, 9999, "b" * 8).encode()) <= 64
+    assert len(pack("a" * 8, "t", 999, 9999, "b" * 8, "c" * 8).encode()) <= 64
 
 
 def test_render_collage_numbers_and_keyboard() -> None:
@@ -189,11 +213,11 @@ def test_render_collage_numbers_and_keyboard() -> None:
     assert rows[2] == ["◀ Prev", "Next ▶"]
     assert rows[3] == ["✅ Delete 22, keep 1", "❌ Keep all"]
     data = callback_data(markup)
-    assert pack(KEY, "t", 2, 13, TOKEN) in data
-    assert pack(KEY, "p", 2, 1, TOKEN) in data
-    assert pack(KEY, "p", 2, 3, TOKEN) in data
-    assert pack(KEY, "a", 2, 0, TOKEN) in data
-    assert pack(KEY, "k", 2, 0, TOKEN) in data
+    assert pack(KEY, "t", 2, 13, TOKEN, "k1") in data
+    assert pack(KEY, "p", 2, 1, TOKEN, "k1") in data
+    assert pack(KEY, "p", 2, 3, TOKEN, "k1") in data
+    assert pack(KEY, "a", 2, 0, TOKEN, "k1") in data
+    assert pack(KEY, "k", 2, 0, TOKEN, "k1") in data
 
 
 def test_render_nav_omitted_at_ends() -> None:
@@ -275,7 +299,7 @@ async def test_tripped_again_marks_previous_superseded() -> None:
 
 async def test_toggle_calls_set_keep_and_edits() -> None:
     service, bot, client = make_service()
-    cb = make_callback(pack(KEY, "t", 1, 3, TOKEN))
+    cb = make_callback(pack(KEY, "t", 1, 3, TOKEN, ""))
     await service.on_callback(cb)
     assert ("set_keep", KEY, "rec3", True, TOKEN) in client.calls
     assert len(bot.edits) == 1
@@ -285,14 +309,14 @@ async def test_toggle_calls_set_keep_and_edits() -> None:
 
 async def test_toggle_on_kept_item_unkeeps() -> None:
     service, _, client = make_service()
-    client.pages[1] = make_page(1, kept=(3,))
-    await service.on_callback(make_callback(pack(KEY, "t", 1, 3, TOKEN)))
+    client.pages[1] = make_page(1, kept=(3,), keep_token="kx")
+    await service.on_callback(make_callback(pack(KEY, "t", 1, 3, TOKEN, "kx")))
     assert ("set_keep", KEY, "rec3", False, TOKEN) in client.calls
 
 
 async def test_page_edits_with_new_thumbs() -> None:
     service, bot, client = make_service()
-    await service.on_callback(make_callback(pack(KEY, "p", 1, 2, TOKEN)))
+    await service.on_callback(make_callback(pack(KEY, "p", 1, 2, TOKEN, "")))
     assert ("page", KEY, 2) in client.calls
     assert sum(1 for c in client.calls if c[0] == "thumbnail") == 10
     assert collage_captions(bot.edits[0]["rich_message"])[0] == "11"
@@ -301,8 +325,8 @@ async def test_page_edits_with_new_thumbs() -> None:
 
 async def test_apply_edits_final_text_no_buttons() -> None:
     service, bot, client = make_service()
-    await service.on_callback(make_callback(pack(KEY, "a", 1, 0, TOKEN)))
-    assert ("resolve", KEY, "apply", TOKEN) in client.calls
+    await service.on_callback(make_callback(pack(KEY, "a", 1, 0, TOKEN, "")))
+    assert ("resolve", KEY, "apply", TOKEN, "") in client.calls
     edit = bot.edits[0]
     assert block_texts(edit["rich_message"]) == [
         "22 will be deleted at the next sync. 1 kept, re-downloading."
@@ -313,8 +337,8 @@ async def test_apply_edits_final_text_no_buttons() -> None:
 async def test_keep_all_final_text() -> None:
     service, bot, client = make_service()
     client.resolve_result = {"approved": 0, "rejected": 23}
-    await service.on_callback(make_callback(pack(KEY, "k", 1, 0, TOKEN)))
-    assert ("resolve", KEY, "keep_all", TOKEN) in client.calls
+    await service.on_callback(make_callback(pack(KEY, "k", 1, 0, TOKEN, "")))
+    assert ("resolve", KEY, "keep_all", TOKEN, None) in client.calls
     assert block_texts(bot.edits[0]["rich_message"]) == [
         "Nothing deleted. 23 photos will re-download at the next sync."
     ]
@@ -327,18 +351,18 @@ async def test_stale_token_redraws_and_answers(op: str, arg: int) -> None:
     stale = StaleBatchError("new00000")
     client.raise_on = {"set_keep": stale, "resolve": stale}
     client.pages[1] = make_page(1, token="new00000")
-    cb = make_callback(pack(KEY, op, 1, arg, TOKEN))
+    cb = make_callback(pack(KEY, op, 1, arg, TOKEN, ""))
     await service.on_callback(cb)
     cb.answer.assert_awaited_once()
     assert cb.answer.await_args.args[0] == STALE_TEXT
     assert len(bot.edits) == 1
-    assert all(d.endswith(":new00000") for d in callback_data(bot.edits[0]["reply_markup"]))
+    assert all(":new00000:" in d for d in callback_data(bot.edits[0]["reply_markup"]))
 
 
 async def test_page_with_stale_token_redraws_and_answers() -> None:
     service, bot, client = make_service()
     client.pages[2] = make_page(2, token="new00000")
-    cb = make_callback(pack(KEY, "p", 1, 2, TOKEN))
+    cb = make_callback(pack(KEY, "p", 1, 2, TOKEN, ""))
     await service.on_callback(cb)
     assert cb.answer.await_args.args[0] == STALE_TEXT
     assert len(bot.edits) == 1
@@ -348,7 +372,7 @@ async def test_page_with_stale_token_redraws_and_answers() -> None:
 async def test_syncing_answers_retry_text_changes_nothing(op: str, arg: int) -> None:
     service, bot, client = make_service()
     client.raise_on = {"set_keep": SyncingError(), "resolve": SyncingError()}
-    cb = make_callback(pack(KEY, op, 1, arg, TOKEN))
+    cb = make_callback(pack(KEY, op, 1, arg, TOKEN, ""))
     await service.on_callback(cb)
     assert cb.answer.await_args.args[0] == "icloudpd is syncing, try again in a minute."
     assert bot.edits == []
@@ -356,7 +380,7 @@ async def test_syncing_answers_retry_text_changes_nothing(op: str, arg: int) -> 
 
 async def test_callback_from_disallowed_chat_ignored() -> None:
     service, bot, client = make_service()
-    cb = make_callback(pack(KEY, "a", 1, 0, TOKEN), chat_id=999)
+    cb = make_callback(pack(KEY, "a", 1, 0, TOKEN, ""), chat_id=999)
     await service.on_callback(cb)
     assert client.calls == []
     assert bot.edits == []
@@ -366,7 +390,7 @@ async def test_callback_from_disallowed_chat_ignored() -> None:
 async def test_callback_works_without_prior_state() -> None:
     service, bot, _ = make_service()
     assert service.last_message == {}
-    await service.on_callback(make_callback(pack(KEY, "p", 1, 3, TOKEN), message_id=555))
+    await service.on_callback(make_callback(pack(KEY, "p", 1, 3, TOKEN, ""), message_id=555))
     assert bot.edits[0]["message_id"] == 555
 
 
@@ -418,3 +442,108 @@ async def test_summary_event_sends_nothing() -> None:
         assert bot.sent == [] and client.calls == []
         assert (await http.post("/notify", json=TRIPPED)).status == 204
     assert len(bot.sent) == 1
+
+
+class EditFails:
+    """edit_message_text replacement that raises the given Telegram error."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def __call__(self, **kwargs: Any) -> None:
+        raise self.error
+
+
+def net_error() -> TelegramNetworkError:
+    return TelegramNetworkError(method=None, message="net")  # type: ignore[arg-type]
+
+
+def raise_connection_error() -> list[dict[str, Any]]:
+    raise requests.ConnectionError("down")
+
+
+async def test_apply_sends_callbacks_keep_token_not_a_fresh_one() -> None:
+    service, _, client = make_service()
+    client.pages[1] = make_page(1, kept=(3,), keep_token="fresh999")
+    await service.on_callback(make_callback(pack(KEY, "a", 1, 0, TOKEN, "seen1234")))
+    assert ("resolve", KEY, "apply", TOKEN, "seen1234") in client.calls
+    assert not any(c[0] == "page" for c in client.calls)
+
+
+async def test_old_apply_after_other_message_toggled_goes_stale_path() -> None:
+    service, bot, client = make_service()
+    client.raise_on = {"resolve": StaleBatchError("t", "new")}
+    client.pages[1] = make_page(1, kept=(3,), keep_token="new")
+    cb = make_callback(pack(KEY, "a", 1, 0, TOKEN, ""))
+    await service.on_callback(cb)
+    assert cb.answer.await_args.args[0] == STALE_TEXT
+    texts = [t for e in bot.edits for t in block_texts(e["rich_message"])]
+    assert not any("will be deleted" in t for t in texts)
+    assert all(d.endswith(":new") for d in callback_data(bot.edits[0]["reply_markup"]))
+
+
+async def test_toggle_with_outdated_keep_token_redraws_without_changing() -> None:
+    service, bot, client = make_service()
+    client.pages[1] = make_page(1, kept=(3,), keep_token="newer")
+    cb = make_callback(pack(KEY, "t", 1, 3, TOKEN, "old"))
+    await service.on_callback(cb)
+    assert not any(c[0] == "set_keep" for c in client.calls)
+    assert cb.answer.await_args.args[0] == STALE_TEXT
+    assert len(bot.edits) == 1
+
+
+async def test_redraw_failure_after_toggle_answers_failure_text() -> None:
+    service, bot, client = make_service()
+    bot.edit_message_text = EditFails(net_error())  # type: ignore[method-assign]
+    cb = make_callback(pack(KEY, "t", 1, 3, TOKEN, ""))
+    await service.on_callback(cb)
+    assert any(c[0] == "set_keep" for c in client.calls)
+    cb.answer.assert_awaited_once()
+    assert cb.answer.await_args.args[0] == REDRAW_FAILED_TEXT
+
+
+async def test_control_failure_during_redraw_after_toggle_answers_failure_text() -> None:
+    service, _, client = make_service()
+    real_page = client.page
+    calls = {"n": 0}
+
+    def page_then_fail(key: str, page: int) -> dict[str, Any]:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise requests.ConnectionError("down")
+        return real_page(key, page)
+
+    client.page = page_then_fail  # type: ignore[method-assign]
+    cb = make_callback(pack(KEY, "t", 1, 3, TOKEN, ""))
+    await service.on_callback(cb)
+    assert any(c[0] == "set_keep" for c in client.calls)
+    assert cb.answer.await_args.args[0] == REDRAW_FAILED_TEXT
+
+
+async def test_not_modified_edit_is_ignored() -> None:
+    service, bot, _ = make_service()
+    error = TelegramBadRequest(
+        method=None, message="Bad Request: message is not modified"  # type: ignore[arg-type]
+    )
+    bot.edit_message_text = EditFails(error)  # type: ignore[method-assign]
+    cb = make_callback(pack(KEY, "p", 1, 2, TOKEN, ""))
+    await service.on_callback(cb)
+    assert cb.answer.await_args.args == ()
+
+
+async def test_stale_handler_answers_even_when_redraw_raises() -> None:
+    service, _, client = make_service()
+    client.raise_on = {"resolve": StaleBatchError("t", "k")}
+    client.entries = raise_connection_error  # type: ignore[method-assign]
+    cb = make_callback(pack(KEY, "a", 1, 0, TOKEN, ""))
+    await service.on_callback(cb)
+    cb.answer.assert_awaited_once()
+    assert cb.answer.await_args.args[0] == STALE_TEXT
+
+
+async def test_apply_final_edit_failure_still_tells_user_it_was_applied() -> None:
+    service, bot, _ = make_service()
+    bot.edit_message_text = EditFails(net_error())  # type: ignore[method-assign]
+    cb = make_callback(pack(KEY, "a", 1, 0, TOKEN, ""))
+    await service.on_callback(cb)
+    assert "22 will be deleted" in cb.answer.await_args.args[0]

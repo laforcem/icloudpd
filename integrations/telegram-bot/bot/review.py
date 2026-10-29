@@ -19,7 +19,7 @@ from typing import Any
 
 import requests
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import (
     BufferedInputFile,
     CallbackQuery,
@@ -43,6 +43,8 @@ PREFIX = "ds"
 OPS = frozenset({"t", "p", "a", "k"})
 STALE_TEXT = "The batch changed, nothing was deleted. Here's the updated batch."
 SYNCING_TEXT = "icloudpd is syncing, try again in a minute."
+REDRAW_FAILED_TEXT = "Couldn't update the message, tap Next/Prev to refresh."
+APPLIED_NO_REDRAW_SUFFIX = " (Couldn't update the message.)"
 UNREACHABLE_TEXT = "Couldn't reach icloudpd, try again in a minute."
 GONE_TEXT = "This review is no longer available."
 NOTHING_HELD_TEXT = "No held deletions."
@@ -57,24 +59,28 @@ class Callback:
     page: int
     arg: int
     token: str
+    keep_token: str
 
 
-def pack(key: str, op: str, page: int, arg: int, token: str) -> str:
+def pack(key: str, op: str, page: int, arg: int, token: str, keep_token: str = "") -> str:
+    """`keep_token` is the fingerprint of the keep marks shown with the page."""
     if op not in OPS:
         raise ValueError(f"unknown op {op!r}")
-    if ":" in key or ":" in token or not key or not token:
+    if ":" in key or ":" in token or ":" in keep_token or not key or not token:
         raise ValueError("key and token must be non-empty and contain no ':'")
-    return f"{PREFIX}:{key}:{op}:{page}:{arg}:{token}"
+    return f"{PREFIX}:{key}:{op}:{page}:{arg}:{token}:{keep_token}"
 
 
 def unpack(data: str) -> Callback:
     parts = data.split(":")
-    if len(parts) != 6 or parts[0] != PREFIX:
+    if len(parts) != 7 or parts[0] != PREFIX:
         raise ValueError(f"not a review callback: {data!r}")
-    _, key, op, page, arg, token = parts
+    _, key, op, page, arg, token, keep_token = parts
     if op not in OPS or not key or not token or not page.isdigit() or not arg.isdigit():
         raise ValueError(f"malformed review callback: {data!r}")
-    return Callback(key=key, op=op, page=int(page), arg=int(arg), token=token)
+    return Callback(
+        key=key, op=op, page=int(page), arg=int(arg), token=token, keep_token=keep_token
+    )
 
 
 def _paragraph(text: str) -> InputRichBlockParagraph:
@@ -118,10 +124,11 @@ def render(
 
 def _keyboard(key: str, page: dict[str, Any]) -> InlineKeyboardMarkup:
     token, current, pages = page["batch_token"], page["page"], page["pages"]
+    marks = page.get("keep_token", "")
     toggles = [
         InlineKeyboardButton(
             text=f"{'💾' if i['keep'] else '🗑'} {i['number']}",
-            callback_data=pack(key, "t", current, i["number"], token),
+            callback_data=pack(key, "t", current, i["number"], token, marks),
         )
         for i in page["items"]
     ]
@@ -130,13 +137,13 @@ def _keyboard(key: str, page: dict[str, Any]) -> InlineKeyboardMarkup:
     if current > 1:
         nav.append(
             InlineKeyboardButton(
-                text="◀ Prev", callback_data=pack(key, "p", current, current - 1, token)
+                text="◀ Prev", callback_data=pack(key, "p", current, current - 1, token, marks)
             )
         )
     if current < pages:
         nav.append(
             InlineKeyboardButton(
-                text="Next ▶", callback_data=pack(key, "p", current, current + 1, token)
+                text="Next ▶", callback_data=pack(key, "p", current, current + 1, token, marks)
             )
         )
     kept = page["kept_count"]
@@ -145,10 +152,10 @@ def _keyboard(key: str, page: dict[str, Any]) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 text=f"✅ Delete {page['total'] - kept}, keep {kept}",
-                callback_data=pack(key, "a", current, 0, token),
+                callback_data=pack(key, "a", current, 0, token, marks),
             ),
             InlineKeyboardButton(
-                text="❌ Keep all", callback_data=pack(key, "k", current, 0, token)
+                text="❌ Keep all", callback_data=pack(key, "k", current, 0, token, marks)
             ),
         ]
     )
@@ -214,13 +221,20 @@ class ReviewService:
         try:
             await self._dispatch(callback, cb, chat_id, message_id)
         except StaleBatchError:
-            await self._draw(chat_id, message_id, cb.key, cb.page)
+            # Answer first: the redraw is best effort and must not leave the tap unanswered.
             await callback.answer(STALE_TEXT)
+            try:
+                await self._draw(chat_id, message_id, cb.key, cb.page)
+            except (requests.RequestException, SyncingError, TelegramAPIError) as ex:
+                logger.warning("Could not redraw after a stale batch: %s", type(ex).__name__)
         except SyncingError:
             await callback.answer(SYNCING_TEXT, show_alert=True)
         except requests.RequestException as ex:
             logger.warning("Review action failed: %s", type(ex).__name__)
             await callback.answer(UNREACHABLE_TEXT, show_alert=True)
+        except TelegramAPIError as ex:
+            logger.warning("Review message update failed: %s", type(ex).__name__)
+            await callback.answer(REDRAW_FAILED_TEXT, show_alert=True)
 
     # -- internals --------------------------------------------------------
 
@@ -231,12 +245,20 @@ class ReviewService:
         if cb.op == "t":
             page = await asyncio.to_thread(client.page, cb.key, cb.page)
             item = next((i for i in page["items"] if i["number"] == cb.arg), None)
-            if item is None:
-                raise StaleBatchError(page["batch_token"])
+            # The tap flips the state this message showed; if the marks moved since
+            # (another message toggled), flipping now would do the opposite of the intent.
+            if item is None or page.get("keep_token", "") != cb.keep_token:
+                raise StaleBatchError(page["batch_token"], page.get("keep_token", ""))
             await asyncio.to_thread(
                 client.set_keep, cb.key, item["record_name"], not item["keep"], cb.token
             )
-            await self._draw(chat_id, mid, cb.key, cb.page)
+            # The keep mark is saved; a failed redraw must not look like success.
+            try:
+                await self._draw(chat_id, mid, cb.key, cb.page)
+            except (requests.RequestException, SyncingError, TelegramAPIError) as ex:
+                logger.warning("Redraw after keep toggle failed: %s", type(ex).__name__)
+                await callback.answer(REDRAW_FAILED_TEXT, show_alert=True)
+                return
             await callback.answer()
         elif cb.op == "p":
             page = await asyncio.to_thread(client.page, cb.key, cb.arg)
@@ -247,7 +269,14 @@ class ReviewService:
                 await callback.answer()
         else:
             action = "apply" if cb.op == "a" else "keep_all"
-            result = await asyncio.to_thread(client.resolve, cb.key, action, cb.token)
+            # Apply sends the keep token this message was drawn with, never a fresh one.
+            result = await asyncio.to_thread(
+                client.resolve,
+                cb.key,
+                action,
+                cb.token,
+                cb.keep_token if cb.op == "a" else None,
+            )
             if cb.op == "a":
                 text = (
                     f"{result['approved']} will be deleted at the next sync. "
@@ -258,7 +287,13 @@ class ReviewService:
                     f"Nothing deleted. {result['rejected']} photos will re-download "
                     "at the next sync."
                 )
-            await self._edit(chat_id, mid, _text_message(text), None)
+            try:
+                await self._edit(chat_id, mid, _text_message(text), None)
+            except TelegramAPIError as ex:
+                # Already resolved on the server: say so rather than report a failure.
+                logger.warning("Could not edit the final review text: %s", type(ex).__name__)
+                await callback.answer(text + APPLIED_NO_REDRAW_SUFFIX, show_alert=True)
+                return
             await callback.answer()
 
     async def _fetch_thumbs(self, key: str, page: dict[str, Any]) -> dict[str, bytes | None]:
@@ -314,7 +349,10 @@ class ReviewService:
             previous = self.last_message.get((chat_id, key))
             self.last_message[(chat_id, key)] = sent.message_id
             if previous is not None:
-                await self._edit(chat_id, previous, _text_message(SUPERSEDED_TEXT), None)
+                try:
+                    await self._edit(chat_id, previous, _text_message(SUPERSEDED_TEXT), None)
+                except TelegramAPIError as ex:
+                    logger.info("Could not mark old review superseded: %s", type(ex).__name__)
 
     async def _edit(
         self,
@@ -327,6 +365,7 @@ class ReviewService:
             await self._bot.edit_message_text(
                 chat_id=chat_id, message_id=message_id, rich_message=rich, reply_markup=markup
             )
-        except TelegramAPIError as ex:
-            # Unchanged content ("message is not modified") or a message that was deleted.
-            logger.info("Could not edit review message: %s", type(ex).__name__)
+        except TelegramBadRequest as ex:
+            # Only a no-op edit is benign; anything else the caller must handle.
+            if "message is not modified" not in str(ex):
+                raise

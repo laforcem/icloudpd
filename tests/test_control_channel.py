@@ -179,7 +179,16 @@ def test_held_page_shape_and_paging(tmp_path: pathlib.Path) -> None:
     response = client.get(f"/v1/entries/{_key(user)}/held?page=2", headers=AUTH)
     assert response.status_code == 200
     page = response.get_json()
-    assert set(page) == {"batch_token", "page", "pages", "total", "kept_count", "items"}
+    assert set(page) == {
+        "batch_token",
+        "keep_token",
+        "page",
+        "pages",
+        "total",
+        "kept_count",
+        "items",
+    }
+    assert page["keep_token"] == ""
     assert (page["page"], page["pages"], page["total"], page["kept_count"]) == (2, 2, 12, 0)
     assert [i["number"] for i in page["items"]] == [11, 12]
     assert page["batch_token"] == first["batch_token"] != ""
@@ -198,9 +207,14 @@ def test_keep_then_apply_touches_only_that_entry(three: list[UserConfig]) -> Non
         f"/v1/entries/{key}/held/S01/keep", json={"keep": True, "batch_token": token}, headers=AUTH
     )
     assert response.status_code == 200
-    assert response.get_json() == {"total": 5, "kept_count": 1}
+    marks = response.get_json()["keep_token"]
+    assert response.get_json() == {"total": 5, "kept_count": 1, "keep_token": marks}
+    assert len(marks) == 8
+    assert client.get(f"/v1/entries/{key}/held", headers=AUTH).get_json()["keep_token"] == marks
     response = client.post(
-        f"/v1/entries/{key}/resolve", json={"action": "apply", "batch_token": token}, headers=AUTH
+        f"/v1/entries/{key}/resolve",
+        json={"action": "apply", "batch_token": token, "keep_token": marks},
+        headers=AUTH,
     )
     assert response.status_code == 200
     assert response.get_json() == {"approved": 4, "rejected": 1}
@@ -247,6 +261,8 @@ def test_keep_bad_body_400(three: list[UserConfig], body: Any) -> None:
         {"action": "approve", "batch_token": "t"},
         {"action": "apply"},
         {"action": "apply", "batch_token": None},
+        {"action": "apply", "batch_token": "t"},
+        {"action": "apply", "batch_token": "t", "keep_token": 5},
         None,
     ],
 )
@@ -273,13 +289,34 @@ def test_stale_token_409_returns_current_token(three: list[UserConfig]) -> None:
     current = client.get(f"/v1/entries/{key}/held", headers=AUTH).get_json()["batch_token"]
     for path, body in (
         ("held/A01/keep", {"keep": True, "batch_token": "deadbeef"}),
-        ("resolve", {"action": "apply", "batch_token": "deadbeef"}),
+        ("resolve", {"action": "apply", "batch_token": "deadbeef", "keep_token": ""}),
     ):
         response = client.post(f"/v1/entries/{key}/{path}", json=body, headers=AUTH)
         assert response.status_code == 409
-        assert response.get_json() == {"batch_token": current}
+        assert response.get_json() == {"batch_token": current, "keep_token": ""}
     assert set(_statuses(three[0]).values()) == {"held"}
     assert client.get(f"/v1/entries/{key}/held", headers=AUTH).get_json()["kept_count"] == 0
+
+
+def test_apply_with_stale_keep_token_409_both_tokens(three: list[UserConfig]) -> None:
+    client = _client(three)
+    key = _key(three[0])
+    page = client.get(f"/v1/entries/{key}/held", headers=AUTH).get_json()
+    token, seen = page["batch_token"], page["keep_token"]
+    toggled = client.post(
+        f"/v1/entries/{key}/held/A01/keep",
+        json={"keep": True, "batch_token": token},
+        headers=AUTH,
+    ).get_json()["keep_token"]
+    assert toggled != seen
+    response = client.post(
+        f"/v1/entries/{key}/resolve",
+        json={"action": "apply", "batch_token": token, "keep_token": seen},
+        headers=AUTH,
+    )
+    assert response.status_code == 409
+    assert response.get_json() == {"batch_token": token, "keep_token": toggled}
+    assert set(_statuses(three[0]).values()) == {"held"}
 
 
 def test_busy_returns_503_syncing(three: list[UserConfig]) -> None:
@@ -292,7 +329,7 @@ def test_busy_returns_503_syncing(three: list[UserConfig]) -> None:
         with patch.object(deletion_sync, "_BUSY_TIMEOUT_SECONDS", 0.05):
             for path, body in (
                 ("held/A01/keep", {"keep": True, "batch_token": token}),
-                ("resolve", {"action": "apply", "batch_token": token}),
+                ("resolve", {"action": "apply", "batch_token": token, "keep_token": ""}),
             ):
                 response = client.post(f"/v1/entries/{key}/{path}", json=body, headers=AUTH)
                 assert response.status_code == 503

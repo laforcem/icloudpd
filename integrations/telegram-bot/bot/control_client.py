@@ -9,9 +9,10 @@ import requests
 class StaleBatchError(Exception):
     """The held batch changed since the user saw it (HTTP 409)."""
 
-    def __init__(self, batch_token: str) -> None:
+    def __init__(self, batch_token: str, keep_token: str = "") -> None:
         super().__init__(f"stale batch, current token {batch_token}")
         self.batch_token = batch_token
+        self.keep_token = keep_token
 
 
 class SyncingError(Exception):
@@ -35,7 +36,10 @@ class ControlClient:
             **kwargs,
         )
         if response.status_code == 409:
-            raise StaleBatchError(str(response.json().get("batch_token", "")))
+            body = response.json()
+            raise StaleBatchError(
+                str(body.get("batch_token", "")), str(body.get("keep_token", ""))
+            )
         if response.status_code == 503 and _reason(response) == "syncing":
             raise SyncingError()
         return response
@@ -69,11 +73,15 @@ class ControlClient:
         response.raise_for_status()
         return dict(response.json())
 
-    def resolve(self, key: str, action: str, token: str) -> dict[str, Any]:
+    def resolve(
+        self, key: str, action: str, token: str, keep_token: str | None = None
+    ) -> dict[str, Any]:
+        """`keep_token` (the keep marks the user saw) is required for action "apply"."""
+        payload: dict[str, Any] = {"action": action, "batch_token": token}
+        if keep_token is not None:
+            payload["keep_token"] = keep_token
         response = self._request(
-            "POST",
-            f"/v1/entries/{quote(key, safe='')}/resolve",
-            json={"action": action, "batch_token": token},
+            "POST", f"/v1/entries/{quote(key, safe='')}/resolve", json=payload
         )
         response.raise_for_status()
         return dict(response.json())

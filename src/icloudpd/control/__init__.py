@@ -179,13 +179,19 @@ def build_control_app(
         with _connect(e.db_path) as conn:
             if conn is None:
                 page = deletion_review.ReviewPage(
-                    batch_token="", page=page_number, pages=0, total=0, kept_count=0, items=[]
+                    batch_token="",
+                    page=page_number,
+                    pages=0,
+                    total=0,
+                    kept_count=0,
+                    items=[],
                 )
             else:
                 page = deletion_review.held_page(conn, page_number)
         return jsonify(
             {
                 "batch_token": page.batch_token,
+                "keep_token": page.keep_token,
                 "page": page.page,
                 "pages": page.pages,
                 "total": page.total,
@@ -233,6 +239,11 @@ def build_control_app(
         response.headers["Cache-Control"] = "no-store"
         return response
 
+    def _stale(ex: StaleBatch) -> Response:
+        return make_response(
+            jsonify({"batch_token": ex.batch_token, "keep_token": ex.keep_token}), 409
+        )
+
     def body() -> Dict[str, Any] | None:
         data = request.get_json(silent=True)
         return data if isinstance(data, dict) else None
@@ -253,16 +264,16 @@ def build_control_app(
             if conn is None:
                 return _reason(404, "not_found")
             try:
-                total, kept = deletion_review.set_keep(
+                total, kept, marks = deletion_review.set_keep(
                     conn, record_name, data["keep"], data["batch_token"]
                 )
             except StaleBatch as ex:
-                return make_response(jsonify({"batch_token": ex.batch_token}), 409)
+                return _stale(ex)
             except Busy:
                 return _reason(503, "syncing")
             except KeyError:
                 return _reason(404, "not_found")
-        return jsonify({"total": total, "kept_count": kept})
+        return jsonify({"total": total, "kept_count": kept, "keep_token": marks})
 
     @app.route("/v1/entries/<key>/resolve", methods=["POST"])
     def resolve(key: str) -> Response:
@@ -274,19 +285,20 @@ def build_control_app(
             data is None
             or data.get("action") not in ("apply", "keep_all")
             or not isinstance(data.get("batch_token"), str)
+            or (data["action"] == "apply" and not isinstance(data.get("keep_token"), str))
         ):
             return _reason(400, "bad_request")
         with _connect(e.db_path) as conn:
             if conn is None:
                 if data["batch_token"] != "":
-                    return make_response(jsonify({"batch_token": ""}), 409)
+                    return make_response(jsonify({"batch_token": "", "keep_token": ""}), 409)
                 return jsonify({"approved": 0, "rejected": 0})
             try:
                 approved, rejected = deletion_review.apply_review(
-                    conn, data["action"], data["batch_token"]
+                    conn, data["action"], data["batch_token"], data.get("keep_token")
                 )
             except StaleBatch as ex:
-                return make_response(jsonify({"batch_token": ex.batch_token}), 409)
+                return _stale(ex)
             except Busy:
                 return _reason(503, "syncing")
         logger.info(

@@ -121,16 +121,24 @@ Stable across restarts; fits in `callback_data`. Startup fails on a collision (v
 response includes it; every write that acts on the batch must send it back. Mismatch → 409 with the current token.
 This is what guarantees "delete only acts on what you saw".
 
+**Keep token.** The batch token hashes only record names, so toggling a keep mark leaves it unchanged. A second
+fingerprint, `keep_token` (first 8 hex of sha256 over the sorted names that are held *and* marked keep; blank when
+none are), covers the marks. Without it, two open messages for one entry (several chats, or messages from before a
+bot restart) could show different marks, and Apply from a stale one would delete a photo its screen showed as kept.
+Page and keep responses include it; `apply` must send back the one the user saw and it is compared inside the same
+write transaction as the batch token; mismatch → 409 with both current tokens. `keep_all` does not need it (it
+rejects everything, so no mark matters).
+
 **Routes** (JSON unless noted; exact field names are the builder's):
 
 - `GET /v1/entries` → every configured entry: `key`, `username`, `library`, `held_count`, `tripped`.
-- `GET /v1/entries/<key>/held?page=N` → `batch_token`, `page`, `pages`, `total`, `kept_count`, and up to 10 items:
+- `GET /v1/entries/<key>/held?page=N` → `batch_token`, `keep_token`, `page`, `pages`, `total`, `kept_count`, and up to 10 items:
   `number` (1-based position in the batch), `record_name`, `filename`, `asset_date`, `is_video`, `keep`.
   Order is stable: `detected_utc`, then `record_name`.
 - `GET /v1/entries/<key>/held/<record_name>/thumbnail` → `image/jpeg` bytes, or 503 when the account's slot is
   empty or iCloud fails. Nothing written to disk.
-- `POST /v1/entries/<key>/held/<record_name>/keep` `{keep: bool, batch_token}` → updated page counts.
-- `POST /v1/entries/<key>/resolve` `{action: "apply" | "keep_all", batch_token}`.
+- `POST /v1/entries/<key>/held/<record_name>/keep` `{keep: bool, batch_token}` → `total`, `kept_count`, `keep_token`.
+- `POST /v1/entries/<key>/resolve` `{action: "apply" | "keep_all", batch_token, keep_token}` (`keep_token` required, 400 if missing, for `apply`).
   `apply`: in **one** write transaction, approve every held item not marked keep and reject every marked one.
   `keep_all`: reject all. Both go through Part 1's `resolve()` logic (extend it to take both sets in one
   transaction rather than reimplementing). Returns counts.
@@ -169,7 +177,9 @@ own SQLite connection per request.
 - When the batch grows (a new tripped event for the same entry), the bot sends a fresh message and edits its
   previous message for that entry, if it still knows its id, to "Superseded, see the newer message" without
   buttons. *(My call.)*
-- `callback_data` format: `ds:<entrykey>:<op>:<page>:<arg>:<batchtoken>`; worst case well under 64 bytes.
+- `callback_data` format: `ds:<entrykey>:<op>:<page>:<arg>:<batchtoken>:<keeptoken>`; worst case about 40 bytes. Apply sends the
+  `keeptoken` its message was drawn with, never a freshly fetched one; a toggle whose `keeptoken` is outdated redraws
+  instead of flipping.
   The bot keeps no review state: every tap carries what it needs, so a bot restart doesn't break open messages.
 - Toggle → `POST keep`, redraw keyboard and header counts. Prev/Next → fetch page, edit the message with new
   thumbnails. 409 on any action → redraw the current page with the fresh token and answer the tap with

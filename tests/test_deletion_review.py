@@ -114,11 +114,14 @@ def test_set_keep_marks_and_counts(tmp_path: Path) -> None:
     conn = make_db(tmp_path)
     seed(conn, 3)
     token = deletion_review.batch_token(conn)
-    assert deletion_review.set_keep(conn, "REC01", True, token) == (3, 1)
+    total, kept, keep_token = deletion_review.set_keep(conn, "REC01", True, token)
+    assert (total, kept) == (3, 1)
+    assert keep_token == deletion_review.keep_token(conn) != ""
     page = deletion_review.held_page(conn, 1)
     assert page.kept_count == 1
     assert [i.keep for i in page.items] == [False, True, False]
-    assert deletion_review.set_keep(conn, "REC01", False, token) == (3, 0)
+    assert deletion_review.set_keep(conn, "REC01", False, token)[:2] == (3, 0)
+    assert deletion_review.keep_token(conn) == ""
 
 
 def test_set_keep_unknown_or_not_held_record(tmp_path: Path) -> None:
@@ -138,7 +141,8 @@ def test_apply_marks_split(tmp_path: Path) -> None:
     token = deletion_review.batch_token(conn)
     deletion_review.set_keep(conn, names[0], True, token)
     deletion_review.set_keep(conn, names[3], True, token)
-    assert deletion_review.apply_review(conn, "apply", token) == (3, 2)
+    kt = deletion_review.keep_token(conn)
+    assert deletion_review.apply_review(conn, "apply", token, kt) == (3, 2)
     statuses = status_of(conn)
     assert statuses[names[0]] == statuses[names[3]] == "rejected"
     assert [statuses[n] for n in (names[1], names[2], names[4])] == ["approved"] * 3
@@ -165,7 +169,7 @@ def test_stale_token_changes_nothing(tmp_path: Path) -> None:
     add(conn, "LATE")
     before = status_of(conn)
     with pytest.raises(StaleBatch) as info:
-        deletion_review.apply_review(conn, "apply", token)
+        deletion_review.apply_review(conn, "apply", token, "")
     assert info.value.batch_token == deletion_review.batch_token(conn) != token
     with pytest.raises(StaleBatch):
         deletion_review.set_keep(conn, names[0], True, token)
@@ -185,7 +189,7 @@ def test_busy_raises_busy(tmp_path: Path) -> None:
         with pytest.raises(Busy):
             deletion_review.set_keep(other, names[0], True, token)
         with pytest.raises(Busy):
-            deletion_review.apply_review(other, "apply", token)
+            deletion_review.apply_review(other, "apply", token, "")
     finally:
         holder.execute("ROLLBACK")
         holder.close()
@@ -217,3 +221,56 @@ def test_cli_resolver_ignores_marks(tmp_path: Path) -> None:
     assert len(changed) == 3
     assert set(status_of(conn).values()) == {"approved"}
     assert marks(conn) == 0
+
+
+def test_keep_token_changes_with_toggle_and_returns_when_toggled_back(tmp_path: Path) -> None:
+    conn = make_db(tmp_path)
+    names = seed(conn, 3)
+    token = deletion_review.batch_token(conn)
+    start = deletion_review.held_page(conn, 1).keep_token
+    assert start == ""
+    deletion_review.set_keep(conn, names[0], True, token)
+    marked = deletion_review.held_page(conn, 1).keep_token
+    assert len(marked) == 8 and marked != start
+    deletion_review.set_keep(conn, names[1], True, token)
+    assert deletion_review.keep_token(conn) != marked
+    deletion_review.set_keep(conn, names[1], False, token)
+    assert deletion_review.keep_token(conn) == marked
+    deletion_review.set_keep(conn, names[0], False, token)
+    assert deletion_review.keep_token(conn) == start
+    assert deletion_review.batch_token(conn) == token
+
+
+def test_apply_with_stale_keep_token_changes_nothing(tmp_path: Path) -> None:
+    conn = make_db(tmp_path)
+    names = seed(conn, 3)
+    token = deletion_review.batch_token(conn)
+    seen = deletion_review.keep_token(conn)
+    deletion_review.set_keep(conn, names[0], True, token)  # another message toggled
+    before = status_of(conn)
+    with pytest.raises(StaleBatch) as info:
+        deletion_review.apply_review(conn, "apply", token, seen)
+    assert info.value.batch_token == token
+    assert info.value.keep_token == deletion_review.keep_token(conn) != seen
+    assert status_of(conn) == before
+    assert marks(conn) == 1
+
+
+def test_apply_with_matching_keep_token_succeeds_and_keep_all_needs_none(
+    tmp_path: Path,
+) -> None:
+    conn = make_db(tmp_path)
+    names = seed(conn, 3)
+    token = deletion_review.batch_token(conn)
+    deletion_review.set_keep(conn, names[0], True, token)
+    kt = deletion_review.keep_token(conn)
+    assert deletion_review.apply_review(conn, "apply", token, kt) == (2, 1)
+
+
+def test_apply_requires_keep_token(tmp_path: Path) -> None:
+    conn = make_db(tmp_path)
+    seed(conn, 2)
+    token = deletion_review.batch_token(conn)
+    with pytest.raises(ValueError):
+        deletion_review.apply_review(conn, "apply", token)
+    assert deletion_review.apply_review(conn, "keep_all", token) == (0, 2)

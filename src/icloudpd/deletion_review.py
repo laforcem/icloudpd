@@ -1,7 +1,8 @@
 """Review of held deletion batches: per-photo keep marks and a guarded apply.
 
 The batch token (a hash of the held record names) lets a writer prove it acted
-on the batch the user saw. It is checked inside the write transaction, so a scan
+on the batch the user saw; the keep token (a hash of the names marked keep) does
+the same for the marks, so Apply cannot act on marks changed from another view. It is checked inside the write transaction, so a scan
 that adds or removes a held item between the page view and the tap cannot slip
 through.
 """
@@ -32,9 +33,10 @@ _HELD = ItemStatus.HELD.value
 class StaleBatch(Exception):
     """The held batch changed since the caller's token was issued."""
 
-    def __init__(self, batch_token: str) -> None:
+    def __init__(self, batch_token: str, keep_token: str = "") -> None:
         super().__init__(f"held batch changed (now {batch_token or 'empty'})")
         self.batch_token = batch_token
+        self.keep_token = keep_token
 
 
 class Busy(Exception):
@@ -58,6 +60,7 @@ class ReviewPage:
     total: int
     kept_count: int
     items: list[ReviewItem]
+    keep_token: str = ""
 
 
 def entry_key(username: str, library: str) -> str:
@@ -78,6 +81,25 @@ def batch_token(connection: sqlite3.Connection) -> str:
     return hashlib.sha256("\n".join(names).encode()).hexdigest()[:8]
 
 
+def keep_token(connection: sqlite3.Connection) -> str:
+    """8 hex chars over the sorted held record names marked 'keep'; blank when none are.
+
+    The batch token ignores keep marks, so Apply also carries this one to prove
+    it acts on the marks the user saw.
+    """
+    names = [
+        r[0]
+        for r in connection.execute(
+            "SELECT record_name FROM deletion_items WHERE status = ? AND keep_marked = 1"
+            " ORDER BY record_name",
+            (_HELD,),
+        )
+    ]
+    if not names:
+        return ""
+    return hashlib.sha256("\n".join(names).encode()).hexdigest()[:8]
+
+
 def _counts(connection: sqlite3.Connection) -> tuple[int, int]:
     total, kept = connection.execute(
         "SELECT COUNT(*), COALESCE(SUM(keep_marked), 0) FROM deletion_items WHERE status = ?",
@@ -90,6 +112,7 @@ def held_page(connection: sqlite3.Connection, page: int) -> ReviewPage:
     try:
         total, kept = _counts(connection)
         token = batch_token(connection)
+        marks = keep_token(connection)
         pages = max(1, -(-total // PAGE_SIZE)) if total else 0
         offset = (page - 1) * PAGE_SIZE
         rows = (
@@ -114,12 +137,18 @@ def held_page(connection: sqlite3.Connection, page: int) -> ReviewPage:
         for n, r in enumerate(rows)
     ]
     return ReviewPage(
-        batch_token=token, page=page, pages=pages, total=total, kept_count=kept, items=items
+        batch_token=token,
+        page=page,
+        pages=pages,
+        total=total,
+        kept_count=kept,
+        items=items,
+        keep_token=marks,
     )
 
 
-def _begin(connection: sqlite3.Connection, token: str) -> None:
-    """Open the write transaction and verify the token inside it."""
+def _begin(connection: sqlite3.Connection, token: str, marks: str | None = None) -> None:
+    """Open the write transaction and verify the token(s) inside it."""
     try:
         connection.execute("BEGIN IMMEDIATE")
     except sqlite3.OperationalError as ex:
@@ -127,15 +156,16 @@ def _begin(connection: sqlite3.Connection, token: str) -> None:
             raise Busy(str(ex)) from ex
         raise DeletionSyncError(f"begin: {ex}") from ex
     current = batch_token(connection)
-    if current != token:
+    current_marks = keep_token(connection)
+    if current != token or (marks is not None and current_marks != marks):
         connection.rollback()
-        raise StaleBatch(current)
+        raise StaleBatch(current, current_marks)
 
 
 def set_keep(
     connection: sqlite3.Connection, record_name: str, keep: bool, token: str
-) -> tuple[int, int]:
-    """Mark or unmark one held photo as 'keep'. Returns (total, kept_count)."""
+) -> tuple[int, int, str]:
+    """Mark or unmark one held photo as 'keep'. Returns (total, kept_count, keep_token)."""
     _begin(connection, token)
     try:
         changed = connection.execute(
@@ -145,7 +175,7 @@ def set_keep(
         if not changed:
             connection.rollback()
             raise KeyError(record_name)
-        counts = _counts(connection)
+        counts = (*_counts(connection), keep_token(connection))
         connection.commit()
     except sqlite3.Error as ex:
         connection.rollback()
@@ -157,13 +187,19 @@ def set_keep(
 
 
 def apply_review(
-    connection: sqlite3.Connection, action: Literal["apply", "keep_all"], token: str
+    connection: sqlite3.Connection,
+    action: Literal["apply", "keep_all"],
+    token: str,
+    marks: str | None = None,
 ) -> tuple[int, int]:
     """Approve the unmarked held items and reject the marked ones (all, for keep_all).
 
-    Returns (approved count, rejected count).
+    "apply" needs `marks`, the keep token the caller saw; it is checked in the same
+    transaction as the batch token. Returns (approved count, rejected count).
     """
-    _begin(connection, token)
+    if action == "apply" and marks is None:
+        raise ValueError("apply requires the keep token")
+    _begin(connection, token, marks if action == "apply" else None)
     try:
         held = deletion_sync.list_items(connection, [ItemStatus.HELD])
         if action == "keep_all":

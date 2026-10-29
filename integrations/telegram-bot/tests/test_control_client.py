@@ -12,10 +12,14 @@ def test_control_client_sends_bearer_and_maps_409_503() -> None:
     assert client.entries() == [{"key": "k"}]
     assert responses.calls[0].request.headers["Authorization"] == "Bearer sekret"
 
-    responses.post(f"{BASE}/v1/entries/k/held/r1/keep", json={"batch_token": "new"}, status=409)
+    responses.post(
+        f"{BASE}/v1/entries/k/held/r1/keep",
+        json={"batch_token": "new", "keep_token": "kk"},
+        status=409,
+    )
     with pytest.raises(StaleBatchError) as stale:
         client.set_keep("k", "r1", True, "old")
-    assert stale.value.batch_token == "new"
+    assert (stale.value.batch_token, stale.value.keep_token) == ("new", "kk")
 
     responses.post(f"{BASE}/v1/entries/k/resolve", json={"reason": "syncing"}, status=503)
     with pytest.raises(SyncingError):
@@ -45,3 +49,15 @@ def test_thumbnail_bytes_or_none() -> None:
         status=503,
     )
     assert client.thumbnail("k", "r2") is None
+
+
+@responses.activate
+def test_resolve_apply_sends_keep_token_and_keep_all_does_not() -> None:
+    client = ControlClient(BASE, "t")
+    responses.post(f"{BASE}/v1/entries/k/resolve", json={"approved": 1, "rejected": 0})
+    client.resolve("k", "apply", "tok", "kt")
+    assert responses.calls[-1].request.body == (
+        b'{"action": "apply", "batch_token": "tok", "keep_token": "kt"}'
+    )
+    client.resolve("k", "keep_all", "tok")
+    assert responses.calls[-1].request.body == b'{"action": "keep_all", "batch_token": "tok"}'
