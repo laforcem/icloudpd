@@ -22,6 +22,7 @@ from bot.messages import (
 )
 from bot.mfa_waiter import MfaResultWaiter
 from bot.notify_listener import build_notify_app
+from bot.review import ReviewService
 from bot.state import ChatState
 
 
@@ -31,9 +32,12 @@ def build_application(
     client: IcloudpdClient,
     state: ChatState,
     waiter: MfaResultWaiter,
+    review: ReviewService | None = None,
 ) -> tuple[Dispatcher, web.Application]:
     dispatcher = Dispatcher()
-    dispatcher.include_router(build_router(client, state, waiter, config.allowed_chat_ids))
+    dispatcher.include_router(
+        build_router(client, state, waiter, config.allowed_chat_ids, review)
+    )
 
     async def on_session_expired(event: dict[str, Any]) -> None:
         text = session_expired_text(
@@ -82,6 +86,10 @@ def build_application(
         for chat_id in config.allowed_chat_ids:
             await bot.send_message(chat_id, text)
 
+    async def on_threshold_tripped(event: dict[str, Any]) -> None:
+        if review is not None:
+            await review.on_tripped(event)
+
     notify_app = build_notify_app(
         on_session_expired,
         on_session_expiring_soon,
@@ -89,5 +97,6 @@ def build_application(
         on_mfa_rejected,
         on_library_mount_missing,
         on_library_mount_restored,
+        on_threshold_tripped,
     )
     return dispatcher, notify_app

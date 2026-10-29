@@ -143,3 +143,53 @@ def test_load_config_reports_missing_secret_file(monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(BotConfigError, match="could not be read"):
         load_config()
+
+
+def _base_env(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    token_path = tmp_path / "token.txt"
+    token_path.write_text("123:abc")
+    chat_ids_path = tmp_path / "chat_ids.txt"
+    chat_ids_path.write_text("488165044")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN_FILE", str(token_path))
+    monkeypatch.delenv("TELEGRAM_ALLOWED_CHAT_IDS", raising=False)
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS_FILE", str(chat_ids_path))
+    monkeypatch.delenv("ICLOUDPD_CONTROL_TOKEN", raising=False)
+    monkeypatch.delenv("ICLOUDPD_CONTROL_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("ICLOUDPD_CONTROL_URL", raising=False)
+
+
+def test_config_rejects_raw_control_token_env(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _base_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("ICLOUDPD_CONTROL_TOKEN", "sekret")
+
+    with pytest.raises(BotConfigError, match="ICLOUDPD_CONTROL_TOKEN"):
+        load_config()
+
+
+def test_config_control_defaults_to_disabled_with_default_url(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _base_env(tmp_path, monkeypatch)
+
+    config = load_config()
+
+    assert config.control_token is None
+    assert config.control_url == "http://icloudpd:2012"
+
+
+def test_config_reads_control_token_file_and_url(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _base_env(tmp_path, monkeypatch)
+    control_path = tmp_path / "control.txt"
+    control_path.write_text("sekret\n")
+    monkeypatch.setenv("ICLOUDPD_CONTROL_TOKEN_FILE", str(control_path))
+    monkeypatch.setenv("ICLOUDPD_CONTROL_URL", "http://icloudpd:9999")
+
+    config = load_config()
+
+    assert config.control_token == "sekret"
+    assert config.control_url == "http://icloudpd:9999"

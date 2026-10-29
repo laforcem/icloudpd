@@ -23,6 +23,10 @@ class BotConfig:
     # if unset. Treated as a secret (ICLOUDPD_WEBUI_EXTERNAL_URL_FILE) since a
     # real domain here can expose an otherwise-unauthenticated admin panel.
     webui_external_url: str | None = None
+    # Control channel of icloudpd (deletion-sync review). Without a token file
+    # the review feature is off: held-deletion events are ignored.
+    control_url: str | None = None
+    control_token: str | None = None
 
 
 def _read_secret_file(file_env_var: str, raw_env_var: str) -> str:
@@ -72,10 +76,16 @@ def load_config() -> BotConfig:
     webui_external_url = _read_optional_secret_file(
         "ICLOUDPD_WEBUI_EXTERNAL_URL_FILE", "ICLOUDPD_WEBUI_EXTERNAL_URL"
     )
+    control_url = os.environ.get("ICLOUDPD_CONTROL_URL", "http://icloudpd:2012")
+    control_token = _read_optional_secret_file(
+        "ICLOUDPD_CONTROL_TOKEN_FILE", "ICLOUDPD_CONTROL_TOKEN"
+    )
     return BotConfig(
         bot_token=bot_token,
         allowed_chat_ids=allowed_chat_ids,
         icloudpd_base_url=icloudpd_base_url,
         notify_listener_port=notify_listener_port,
         webui_external_url=webui_external_url,
+        control_url=control_url,
+        control_token=control_token,
     )

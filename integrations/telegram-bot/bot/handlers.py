@@ -4,6 +4,7 @@ import asyncio
 
 import requests
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from bot.icloudpd_client import IcloudpdClient
@@ -21,6 +22,7 @@ from bot.messages import (
     retry_mount_requested_text,
 )
 from bot.mfa_waiter import MfaResultWaiter
+from bot.review import PREFIX, ReviewService
 from bot.state import ChatState
 
 
@@ -172,8 +174,19 @@ def build_router(
     state: ChatState,
     waiter: MfaResultWaiter,
     allowed_chat_ids: frozenset[int],
+    review: ReviewService | None = None,
 ) -> Router:
     router = Router()
+
+    if review is not None:
+
+        @router.callback_query(F.data.startswith(f"{PREFIX}:"))
+        async def _review_callback(callback: CallbackQuery) -> None:
+            await review.on_callback(callback)
+
+        @router.message(Command("held"))
+        async def _held(message: Message) -> None:
+            await review.on_held_command(message)
 
     @router.callback_query(F.data.in_({"start_2fa", "retry_2fa"}))
     async def _start_or_retry(callback: CallbackQuery) -> None:

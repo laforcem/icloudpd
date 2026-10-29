@@ -8,8 +8,10 @@ from aiohttp import web
 
 from bot.app import build_application
 from bot.config import load_config
+from bot.control_client import ControlClient
 from bot.icloudpd_client import IcloudpdClient
 from bot.mfa_waiter import MfaResultWaiter
+from bot.review import ReviewService
 from bot.state import ChatState
 
 logger = logging.getLogger(__name__)
@@ -23,7 +25,16 @@ async def run() -> None:
     client = IcloudpdClient(config.icloudpd_base_url)
     state = ChatState()
     waiter = MfaResultWaiter()
-    dispatcher, notify_app = build_application(bot, config, client, state, waiter)
+    review: ReviewService | None = None
+    if config.control_token and config.control_url:
+        review = ReviewService(
+            bot,
+            ControlClient(config.control_url, config.control_token),
+            config.allowed_chat_ids,
+        )
+    else:
+        logger.info("ICLOUDPD_CONTROL_TOKEN_FILE not set; deletion review is disabled")
+    dispatcher, notify_app = build_application(bot, config, client, state, waiter, review)
 
     runner = web.AppRunner(notify_app)
     await runner.setup()

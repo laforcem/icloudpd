@@ -17,6 +17,7 @@ def build_notify_app(
     on_mfa_rejected: NotifyHandler,
     on_library_mount_missing: NotifyHandler,
     on_library_mount_restored: NotifyHandler,
+    on_threshold_tripped: NotifyHandler,
 ) -> web.Application:
     app = web.Application()
 
@@ -35,6 +36,8 @@ def build_notify_app(
             await on_library_mount_missing(event)
         elif event_type == "library_mount_restored":
             await on_library_mount_restored(event)
+        elif event_type == "deletion_sync_threshold_tripped":
+            await on_threshold_tripped(event)
         else:
             logger.debug("Ignoring unhandled event_type=%s", event_type)
         return web.Response(status=204)

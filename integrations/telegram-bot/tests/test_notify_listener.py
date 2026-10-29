@@ -21,7 +21,7 @@ async def test_session_expiring_soon_event_invokes_its_own_handler() -> None:
         expiring.append(event)
 
     app = build_notify_app(
-        on_session_expired, on_session_expiring_soon, _noop, _noop, _noop, _noop
+        on_session_expired, on_session_expiring_soon, _noop, _noop, _noop, _noop, _noop
     )
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
@@ -48,7 +48,7 @@ async def test_session_expired_event_invokes_handler() -> None:
     async def on_session_expired(event: dict[str, Any]) -> None:
         received.append(event)
 
-    app = build_notify_app(on_session_expired, _noop, _noop, _noop, _noop, _noop)
+    app = build_notify_app(on_session_expired, _noop, _noop, _noop, _noop, _noop, _noop)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -80,7 +80,7 @@ async def test_unhandled_event_type_does_not_invoke_handler() -> None:
     async def on_session_expired(event: dict[str, Any]) -> None:
         received.append(event)
 
-    app = build_notify_app(on_session_expired, _noop, _noop, _noop, _noop, _noop)
+    app = build_notify_app(on_session_expired, _noop, _noop, _noop, _noop, _noop, _noop)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -108,7 +108,7 @@ async def test_mfa_accepted_event_invokes_its_own_handler() -> None:
     async def on_mfa_rejected(event: dict[str, Any]) -> None:
         rejected.append(event)
 
-    app = build_notify_app(_noop, _noop, on_mfa_accepted, on_mfa_rejected, _noop, _noop)
+    app = build_notify_app(_noop, _noop, on_mfa_accepted, on_mfa_rejected, _noop, _noop, _noop)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -138,7 +138,7 @@ async def test_mfa_rejected_event_invokes_its_own_handler() -> None:
     async def on_mfa_rejected(event: dict[str, Any]) -> None:
         rejected.append(event)
 
-    app = build_notify_app(_noop, _noop, on_mfa_accepted, on_mfa_rejected, _noop, _noop)
+    app = build_notify_app(_noop, _noop, on_mfa_accepted, on_mfa_rejected, _noop, _noop, _noop)
     async with TestClient(TestServer(app)) as client:
         response = await client.post(
             "/notify",
@@ -184,7 +184,7 @@ async def test_library_mount_missing_event_invokes_its_own_handler() -> None:
     async def on_restored(event: dict[str, Any]) -> None:
         restored.append(event)
 
-    app = build_notify_app(_noop, _noop, _noop, _noop, on_missing, on_restored)
+    app = build_notify_app(_noop, _noop, _noop, _noop, on_missing, on_restored, _noop)
 
     assert await _post_event(app, "library_mount_missing") == 204
     assert [e["event_type"] for e in missing] == ["library_mount_missing"]
@@ -202,8 +202,23 @@ async def test_library_mount_restored_event_invokes_its_own_handler() -> None:
     async def on_restored(event: dict[str, Any]) -> None:
         restored.append(event)
 
-    app = build_notify_app(_noop, _noop, _noop, _noop, on_missing, on_restored)
+    app = build_notify_app(_noop, _noop, _noop, _noop, on_missing, on_restored, _noop)
 
     assert await _post_event(app, "library_mount_restored") == 204
     assert [e["event_type"] for e in restored] == ["library_mount_restored"]
     assert missing == []
+
+
+@pytest.mark.asyncio
+async def test_threshold_tripped_event_invokes_its_own_handler() -> None:
+    tripped: list[dict[str, Any]] = []
+
+    async def on_tripped(event: dict[str, Any]) -> None:
+        tripped.append(event)
+
+    app = build_notify_app(_noop, _noop, _noop, _noop, _noop, _noop, on_tripped)
+
+    assert await _post_event(app, "deletion_sync_threshold_tripped") == 204
+    assert [e["event_type"] for e in tripped] == ["deletion_sync_threshold_tripped"]
+    assert await _post_event(app, "deletion_sync_summary") == 204
+    assert len(tripped) == 1
