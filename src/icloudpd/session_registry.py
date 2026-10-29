@@ -9,6 +9,7 @@ import threading
 from typing import Dict
 
 from pyicloud_ipd.base import PyiCloudService
+from pyicloud_ipd.exceptions import PyiCloud2SARequiredException
 
 REFRESH_INTERVAL_SECONDS = 600.0
 
@@ -60,7 +61,11 @@ class SessionRegistry:
                 if last is not None and now - last < REFRESH_INTERVAL_SECONDS:
                     return None
                 self._last_refresh[username] = now
-            if service.revalidate_token():
+            try:
+                revalidated = service.revalidate_token()
+            except PyiCloud2SARequiredException:
+                revalidated = False  # needs interactive auth: give up, leave the slot empty
+            if revalidated:
                 return service
             self.publish(username, None)
             return None

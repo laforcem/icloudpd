@@ -9,12 +9,20 @@ through.
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
+
+import requests
 
 from icloudpd import deletion_sync
 from icloudpd.deletion_sync import DeletionSyncError, ItemStatus
+from icloudpd.session_registry import SessionRegistry
+from pyicloud_ipd.exceptions import (
+    PyiCloudAPIResponseException,
+    PyiCloudConnectionErrorException,
+)
 
 PAGE_SIZE = 10
 
@@ -173,3 +181,68 @@ def apply_review(
         connection.rollback()
         raise
     return len(approved), len(rejected)
+
+
+_JPEG_FIELD = re.compile(r"^resJPEG\w+Res$")
+_REAUTH_CODES = {"401", "421", "450"}
+_NETWORK_ERRORS = (requests.RequestException, PyiCloudConnectionErrorException)
+
+
+def thumbnail_field(master: dict[str, Any]) -> str | None:
+    """Name of the smallest JPEG derivative field on a master record, or None.
+
+    Only JPEG fields qualify: a video's small derivative (resVidSmallRes) is a video.
+    """
+    fields = master.get("fields", {})
+    if "resJPEGThumbRes" in fields:
+        return "resJPEGThumbRes"
+    candidates = [k for k in fields if _JPEG_FIELD.match(k)]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda k: fields[k].get("value", {}).get("size", 0))
+
+
+def _library_object(service: Any, library: str) -> Any:
+    if not library:
+        return service.photos
+    if library in service.photos.private_libraries:
+        return service.photos.private_libraries[library]
+    return service.photos.shared_libraries[library]
+
+
+def fetch_thumbnail(
+    registry: SessionRegistry, username: str, library: str, record_name: str, now: float
+) -> bytes | None:
+    """JPEG bytes for a held photo using the account's live session, or None.
+
+    Never prompts for a password or 2FA; None means "show a placeholder".
+    """
+    try:
+        service = registry.get(username) or registry.refresh(username, now)
+    except _NETWORK_ERRORS:
+        return None
+    if service is None:
+        return None
+    for attempt in (1, 2):
+        try:
+            lib = _library_object(service, library)
+            master = lib.lookup_masters([record_name]).get(record_name)
+            field = master and thumbnail_field(master)
+            if not master or not field:
+                return None
+            content: bytes = service.session.get(
+                master["fields"][field]["value"]["downloadURL"]
+            ).content
+            return content
+        except PyiCloudAPIResponseException as e:
+            if attempt == 2 or e.code not in _REAUTH_CODES:
+                return None
+            try:
+                service = registry.refresh(username, now)
+            except _NETWORK_ERRORS:
+                return None
+            if service is None:
+                return None
+        except (*_NETWORK_ERRORS, KeyError):
+            return None
+    return None

@@ -60,6 +60,17 @@ def test_refresh_failure_clears_slot() -> None:
     assert r.get("a") is None
 
 
+def test_refresh_2sa_required_clears_slot() -> None:
+    from pyicloud_ipd.exceptions import PyiCloud2SARequiredException
+
+    r = SessionRegistry()
+    service = _service()
+    service.revalidate_token.side_effect = PyiCloud2SARequiredException("a")
+    r.publish("a", service)
+    assert r.refresh("a", now=1000.0) is None
+    assert r.get("a") is None
+
+
 def test_refresh_empty_slot_does_not_call_apple() -> None:
     r = SessionRegistry()
     assert r.refresh("a", now=1000.0) is None
