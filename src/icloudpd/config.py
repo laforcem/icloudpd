@@ -3,6 +3,7 @@ import pathlib
 from dataclasses import dataclass
 from typing import Sequence
 
+from icloudpd.deletion_sync import DeletionCommand
 from icloudpd.log_level import LogLevel
 from icloudpd.mfa_provider import MFAProvider
 from icloudpd.password_provider import PasswordProvider
@@ -19,6 +20,8 @@ class _DefaultConfig:
     cookie_directory: str
     state_directory: str | None
     require_mount_marker: bool
+    sync_deletions: bool
+    deletion_sync_threshold: int
     sizes: Sequence[AssetVersionSize]
     live_photo_size: LivePhotoVersionSize
     recent: int | None
@@ -70,3 +73,4 @@ class GlobalConfig:
     password_providers: Sequence[PasswordProvider]
     mfa_provider: MFAProvider
     webui_port: int
+    deletion_command: DeletionCommand | None = None

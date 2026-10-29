@@ -39,17 +39,24 @@ def autodelete_photos(
     _sizes: Sequence[AssetVersionSize],
     lp_filename_generator: Callable[[str], str],
     raw_policy: RawTreatmentPolicy,
+    forget: Callable[[str], None] | None = None,
 ) -> None:
     """
     Scans the "Recently Deleted" folder and deletes any matching files
     from the download directory.
     (I.e. If you delete a photo on your phone, it's also deleted on your computer.)
+
+    `forget`, when given, is called with each Recently Deleted record name
+    before its local files are removed, whether or not any exist (deletion
+    sync uses it so a later restore in iCloud re-downloads the photo).
     """
     logger.info("Deleting any files found in 'Recently Deleted'...")
 
     recently_deleted = library_object.recently_deleted
 
     for media in recently_deleted:
+        if forget is not None:
+            forget(media.id)
         try:
             created_date = media.created.astimezone(get_localzone())
         except (ValueError, OSError):

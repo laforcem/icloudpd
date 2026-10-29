@@ -10,7 +10,6 @@ import os
 import sys
 import time
 import typing
-import urllib
 from functools import partial, singledispatch
 from logging import Logger
 from multiprocessing import freeze_support
@@ -37,7 +36,15 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from tzlocal import get_localzone
 
 from foundation.core import compose, identity, map_, partial_1_1
-from icloudpd import download, exif_datetime, manifest, mount_guard, notifications, session_expiry
+from icloudpd import (
+    deletion_sync,
+    download,
+    exif_datetime,
+    manifest,
+    mount_guard,
+    notifications,
+    session_expiry,
+)
 from icloudpd.authentication import authenticator
 from icloudpd.autodelete import autodelete_photos
 from icloudpd.config import GlobalConfig, UserConfig
@@ -52,7 +59,11 @@ from icloudpd.server import serve_app
 from icloudpd.status import Status, StatusExchange
 from icloudpd.string_helpers import parse_timestamp_or_timedelta, truncate_middle
 from icloudpd.xmp_sidecar import generate_xmp_file
-from pyicloud_ipd.asset_version import add_suffix_to_filename, calculate_version_filename
+from pyicloud_ipd.asset_version import (
+    AssetVersion,
+    add_suffix_to_filename,
+    calculate_version_filename,
+)
 from pyicloud_ipd.base import PyiCloudService
 from pyicloud_ipd.exceptions import (
     PyiCloudAPIResponseException,
@@ -291,6 +302,68 @@ def _has_shared_state_directory(logger: logging.Logger, user_configs: Sequence[U
     return shared
 
 
+def _has_shared_deletion_db(logger: logging.Logger, user_configs: Sequence[UserConfig]) -> bool:
+    """Log an error and return True if deletion sync would share a state.db.
+
+    Deletion sync compares one library against one manifest; two entries on the
+    same database (e.g. the default <directory>/.icloudpd) would read each
+    other's records and could delete the wrong photos. Sharing is only an
+    error when at least one of the colliding entries syncs deletions.
+    """
+    owners: Dict[str, UserConfig] = {}
+    shared = False
+    for user_config in user_configs:
+        if not user_config.directory:
+            continue
+        resolved = os.path.abspath(
+            manifest.db_path(
+                *manifest.library_paths(user_config.directory, user_config.state_directory)
+            )
+        )
+        other = owners.get(resolved)
+        if other is None:
+            owners[resolved] = user_config
+        elif other.sync_deletions or user_config.sync_deletions:
+            logger.error(
+                "%s and %s share the manifest database %s and at least one has sync_deletions "
+                "enabled; give each entry its own state_directory.",
+                other.username,
+                user_config.username,
+                resolved,
+            )
+            shared = True
+    return shared
+
+
+def _deletion_sync_config_errors(user_configs: Sequence[UserConfig]) -> List[str]:
+    """Unsafe sync_deletions settings, checked here as well as in cli().
+
+    cli() rejects these with its own messages; this repeats the check for any
+    caller that builds UserConfig objects itself, since each is load-bearing
+    for not deleting photos that should stay.
+    """
+    errors: List[str] = []
+    for user_config in user_configs:
+        if not user_config.sync_deletions:
+            continue
+        if not user_config.require_mount_marker:
+            errors.append(
+                f"{user_config.username}: sync_deletions requires require_mount_marker, so a "
+                "dropped mount is never mistaken for mass deletion"
+            )
+        if user_config.directory and user_config.directory.startswith("~"):
+            errors.append(
+                f"{user_config.username}: directory {user_config.directory!r} starts with '~', "
+                "which icloudpd does not expand; use an absolute path"
+            )
+        if user_config.recent is not None or user_config.until_found is not None:
+            errors.append(
+                f"{user_config.username}: sync_deletions is not compatible with recent or "
+                "until_found"
+            )
+    return errors
+
+
 def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserConfig]) -> int:
     """Run the application with the new configuration system"""
 
@@ -299,6 +372,32 @@ def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserCon
 
     if _has_shared_state_directory(logger, user_configs):
         return 2
+
+    if _has_shared_deletion_db(logger, user_configs):
+        return 2
+
+    unsafe = _deletion_sync_config_errors(user_configs)
+    for error in unsafe:
+        logger.error(error)
+    if unsafe:
+        return 2
+
+    for user_config in user_configs:
+        if not user_config.sync_deletions:
+            continue
+        if user_config.deletion_sync_threshold == -1:
+            logger.warning(
+                "%s: sync_deletions is on with no deletion_sync_threshold; a bad run could "
+                "move any number of photos to Recently Deleted. Consider setting a cap.",
+                user_config.username,
+            )
+        if not user_config.state_directory:
+            logger.warning(
+                "%s: sync_deletions is on without state_directory; the manifest lives in the "
+                "library and is lost if the library is restored or moved. Consider a "
+                "state_directory on local disk.",
+                user_config.username,
+            )
 
     # Create shared status exchange for web server and progress tracking
     shared_status_exchange = StatusExchange()
@@ -486,7 +585,7 @@ def _process_all_users_once(
                     user_config.align_raw,
                 )
                 if user_config.directory is not None
-                else (lambda _m, _s, _c, _p: False)
+                else (lambda _m, _d, _s, _c, _p: False)
             )
 
             notificator = partial(
@@ -584,6 +683,24 @@ def mfa_rejected_notificator_builder(
     notifications.notify(logger, notification_script, event)
 
 
+def deletion_sync_notifier(
+    logger: logging.Logger,
+    user_config: UserConfig,
+    directory: str,
+    event_type: str,
+    message: str,
+    data: Dict[str, Any],
+) -> bool:
+    event = notifications.build_event(
+        event_type,
+        user_config.username,
+        message,
+        data | {"library": user_config.library, "directory": directory},
+    )
+    script = str(user_config.notification_script) if user_config.notification_script else None
+    return notifications.notify(logger, script, event)
+
+
 @singledispatch
 def offset_to_datetime(offset: Any) -> datetime.datetime:
     raise NotImplementedError()
@@ -648,6 +765,115 @@ def skip_created_after_message(
     return f"Skipping {filename}, as it was created {photo.created}, after {target_created_date}."
 
 
+def _select_size(
+    download_size: AssetVersionSize,
+    versions: Mapping[AssetVersionSize, AssetVersion],
+    primary_sizes: Sequence[AssetVersionSize],
+    force_size: bool,
+) -> AssetVersionSize | None:
+    """Size actually downloaded for a requested size, or None to skip it."""
+    if download_size not in versions and download_size != AssetVersionSize.ORIGINAL:
+        if force_size or AssetVersionSize.ORIGINAL in primary_sizes:
+            return None  # forced size missing, or original is downloaded anyway
+        return AssetVersionSize.ORIGINAL
+    return download_size
+
+
+def _version_path(
+    photo: PhotoAsset,
+    versions: Mapping[AssetVersionSize, AssetVersion],
+    filename_overrides: Mapping[AssetVersionSize, str],
+    download_size: AssetVersionSize,
+    download_dir: str,
+    filename_builder: Callable[[PhotoAsset], str],
+    lp_filename_generator: Callable[[str], str],
+) -> tuple[AssetVersion, str, str]:
+    """Version, filename and plain download path for one selected size."""
+    version = versions[download_size]
+    filename = calculate_version_filename(
+        filename_builder(photo),
+        version,
+        download_size,
+        lp_filename_generator,
+        photo.item_type,
+        filename_overrides.get(download_size),
+    )
+    return version, filename, local_download_path(filename, download_dir)
+
+
+def _live_photo_path(
+    photo: PhotoAsset,
+    download_dir: str,
+    filename_builder: Callable[[PhotoAsset], str],
+    lp_filename_generator: Callable[[str], str],
+    live_photo_size: LivePhotoVersionSize,
+    raw_policy: RawTreatmentPolicy,
+) -> tuple[AssetVersion, str] | None:
+    """Version and plain download path of the live photo video, or None if it has none."""
+    photo_versions_with_policy = photo.versions_with_raw_policy(raw_policy)
+    if live_photo_size not in photo_versions_with_policy:
+        return None
+    version = photo_versions_with_policy[live_photo_size]
+    lp_filename = calculate_version_filename(
+        filename_builder(photo),
+        version,
+        live_photo_size,
+        lp_filename_generator,
+        photo.item_type,
+    )
+    if live_photo_size != LivePhotoVersionSize.ORIGINAL:
+        # Add size to filename if not original
+        lp_filename = add_suffix_to_filename(size_to_suffix(live_photo_size), lp_filename)
+    return version, os.path.join(download_dir, lp_filename)
+
+
+def _planned_paths(
+    photo: PhotoAsset,
+    versions: Mapping[AssetVersionSize, AssetVersion],
+    filename_overrides: Mapping[AssetVersionSize, str],
+    primary_sizes: Sequence[AssetVersionSize],
+    force_size: bool,
+    download_dir: str,
+    filename_builder: Callable[[PhotoAsset], str],
+    lp_filename_generator: Callable[[str], str],
+    skip_live_photos: bool,
+    live_photo_size: LivePhotoVersionSize,
+    raw_policy: RawTreatmentPolicy,
+) -> list[tuple[str, int]]:
+    """Plain path and version size of every file download_builder would write for photo.
+
+    Built from the same helpers download_builder uses. Variants (legacy -original,
+    dedup -<size>) are derived by deletion_sync.path_variants.
+    """
+    planned: list[tuple[str, int]] = []
+    for requested_size in primary_sizes:
+        download_size = _select_size(requested_size, versions, primary_sizes, force_size)
+        if download_size is None:
+            continue
+        version, _filename, download_path = _version_path(
+            photo,
+            versions,
+            filename_overrides,
+            download_size,
+            download_dir,
+            filename_builder,
+            lp_filename_generator,
+        )
+        planned.append((download_path, version.size))
+    if not skip_live_photos:
+        live = _live_photo_path(
+            photo,
+            download_dir,
+            filename_builder,
+            lp_filename_generator,
+            live_photo_size,
+            raw_policy,
+        )
+        if live is not None:
+            planned.append((live[1], live[0].size))
+    return planned
+
+
 def download_builder(
     logger: logging.Logger,
     folder_structure: str,
@@ -665,6 +891,7 @@ def download_builder(
     filename_builder: Callable[[PhotoAsset], str],
     raw_policy: RawTreatmentPolicy,
     manifest_handle: manifest.ManifestHandle | None,
+    deletion_scan: deletion_sync.DeletionScan | None,
     icloud: PyiCloudService,
     counter: Counter,
     photo: PhotoAsset,
@@ -722,32 +949,56 @@ def download_builder(
     download_dir = os.path.normpath(os.path.join(directory, date_path))
     success = False
 
-    for download_size in primary_sizes:
-        if download_size not in versions and download_size != AssetVersionSize.ORIGINAL:
+    if deletion_scan is not None and not only_print_filenames:
+        planned = _planned_paths(
+            photo,
+            versions,
+            filename_overrides,
+            primary_sizes,
+            force_size,
+            download_dir,
+            filename_builder,
+            lp_filename_generator,
+            skip_live_photos,
+            live_photo_size,
+            raw_policy,
+        )
+        verdict = deletion_sync.judge_asset(logger, deletion_scan, photo, planned)
+        if verdict != deletion_sync.Verdict.PROCEED:
+            # counter untouched: safe because until_found is rejected with sync_deletions.
+            if dry_run and verdict == deletion_sync.Verdict.SUSPECT:
+                logger.info(
+                    "[DRY RUN] %s would become a deletion candidate after one more scan",
+                    filename_builder(photo),
+                )
+            else:
+                logger.debug(
+                    "%s held for deletion sync (%s)", filename_builder(photo), verdict.value
+                )
+            return False
+
+    for requested_size in primary_sizes:
+        selected_size = _select_size(requested_size, versions, primary_sizes, force_size)
+        if selected_size is None:
             if force_size:
                 error_filename = filename_builder(photo)
                 logger.error(
                     "%s size does not exist for %s. Skipping...",
-                    download_size.value,
+                    requested_size.value,
                     error_filename,
                 )
-                continue
-            if AssetVersionSize.ORIGINAL in primary_sizes:
-                continue  # that should avoid double download for original
-            download_size = AssetVersionSize.ORIGINAL
+            continue  # the else case avoids double download for original
+        download_size = selected_size
 
-        version = versions[download_size]
-        photo_filename = filename_builder(photo)
-        filename = calculate_version_filename(
-            photo_filename,
-            version,
+        version, filename, download_path = _version_path(
+            photo,
+            versions,
+            filename_overrides,
             download_size,
+            download_dir,
+            filename_builder,
             lp_filename_generator,
-            photo.item_type,
-            filename_overrides.get(download_size),
         )
-
-        download_path = local_download_path(filename, download_dir)
 
         original_download_path = None
         file_exists = os.path.isfile(download_path)
@@ -834,26 +1085,16 @@ def download_builder(
     # Also download the live photo if present
     if not skip_live_photos:
         lp_size = live_photo_size
-        photo_versions_with_policy = photo.versions_with_raw_policy(raw_policy)
-        if lp_size in photo_versions_with_policy:
-            version = photo_versions_with_policy[lp_size]
-            lp_photo_filename = filename_builder(photo)
-            lp_filename = calculate_version_filename(
-                lp_photo_filename,
-                version,
-                lp_size,
-                lp_filename_generator,
-                photo.item_type,
-            )
-            if live_photo_size != LivePhotoVersionSize.ORIGINAL:
-                # Add size to filename if not original
-                lp_filename = add_suffix_to_filename(
-                    size_to_suffix(live_photo_size),
-                    lp_filename,
-                )
-            else:
-                pass
-            lp_download_path = os.path.join(download_dir, lp_filename)
+        live = _live_photo_path(
+            photo,
+            download_dir,
+            filename_builder,
+            lp_filename_generator,
+            lp_size,
+            raw_policy,
+        )
+        if live is not None:
+            version, lp_download_path = live
 
             lp_file_exists = os.path.isfile(lp_download_path)
 
@@ -923,28 +1164,7 @@ def delete_photo(
     """Delete a photo from the iCloud account."""
     clean_filename_local = filename_builder(photo)
     logger.debug("Deleting %s in iCloud...", clean_filename_local)
-    url = (
-        f"{library_object.service_endpoint}/records/modify?"
-        f"{urllib.parse.urlencode(library_object.params)}"
-    )
-    post_data = json.dumps(
-        {
-            "atomic": True,
-            "desiredKeys": ["isDeleted"],
-            "operations": [
-                {
-                    "operationType": "update",
-                    "record": {
-                        "fields": {"isDeleted": {"value": 1}},
-                        "recordChangeTag": photo._asset_record["recordChangeTag"],
-                        "recordName": photo._asset_record["recordName"],
-                        "recordType": "CPLAsset",
-                    },
-                }
-            ],
-            "zoneID": library_object.zone_id,
-        }
-    )
+    url, post_data = deletion_sync.build_delete_request(library_object, photo)
     library_object.session.post(url, data=post_data, headers={"Content-type": "application/json"})
     logger.info("Deleted %s in iCloud", clean_filename_local)
 
@@ -991,7 +1211,14 @@ def core_single_run(
     ],
     passer: Callable[[PhotoAsset], bool],
     downloader: Callable[
-        [manifest.ManifestHandle | None, PyiCloudService, Counter, PhotoAsset], bool
+        [
+            manifest.ManifestHandle | None,
+            deletion_sync.DeletionScan | None,
+            PyiCloudService,
+            Counter,
+            PhotoAsset,
+        ],
+        bool,
     ],
     notificator: Callable[[], None],
     notify_mfa_accepted: Callable[[], None],
@@ -1007,7 +1234,7 @@ def core_single_run(
         and not mount_guard.check(
             logger,
             user_config.username,
-            os.path.normpath(user_config.directory),
+            manifest.library_paths(user_config.directory, None)[0],
             str(user_config.notification_script) if user_config.notification_script else None,
         )
     ):
@@ -1097,12 +1324,8 @@ def core_single_run(
                     else:
                         pass
 
-                    directory = os.path.normpath(user_config.directory)
-
-                    state_directory = (
-                        os.path.expanduser(os.path.normpath(user_config.state_directory))
-                        if user_config.state_directory
-                        else None
+                    directory, state_directory = manifest.library_paths(
+                        user_config.directory, user_config.state_directory
                     )
                     manifest_handle = (
                         manifest.open(logger, directory, state_directory)
@@ -1120,8 +1343,27 @@ def core_single_run(
                             state_directory,
                         )
                         return USER_SKIPPED
+                    if (
+                        user_config.sync_deletions
+                        and manifest_handle is None
+                        and not global_config.only_print_filenames
+                    ):
+                        logger.error(
+                            "sync_deletions needs the asset manifest, which could not be "
+                            "opened; refusing to run without it."
+                        )
+                        return USER_SKIPPED
 
+                    deletion_scan: deletion_sync.DeletionScan | None = None
                     try:
+                        if user_config.sync_deletions and manifest_handle is not None:
+                            deletion_scan = deletion_sync.open_scan(
+                                logger,
+                                manifest_handle,
+                                user_config.dry_run,
+                                marker_dir=directory if user_config.require_mount_marker else None,
+                            )
+                        scan_cancelled = False
                         if user_config.skip_photos or user_config.skip_videos:
                             photo_video_phrase = "photos" if user_config.skip_videos else "videos"
                         else:
@@ -1230,7 +1472,9 @@ def core_single_run(
                             now = datetime.datetime.now(get_localzone())
                             # photos_iterator = iter(photos_enumerator)
 
-                            download_photo = partial(downloader, manifest_handle, icloud)
+                            download_photo = partial(
+                                downloader, manifest_handle, deletion_scan, icloud
+                            )
 
                             for item in photos_bar:
                                 try:
@@ -1321,6 +1565,7 @@ def core_single_run(
                                 pass
 
                             if status_exchange.get_progress().cancel:
+                                scan_cancelled = True
                                 logger.info("Iteration was cancelled")
                                 status_exchange.get_progress().photos_last_message = (
                                     "Iteration was cancelled"
@@ -1337,6 +1582,21 @@ def core_single_run(
                                 status_exchange.get_progress().photos_last_message = message
                             status_exchange.get_progress().reset()
 
+                        if deletion_scan is not None and not scan_cancelled:
+                            # Scan-completion hook: every album enumerated to the end.
+                            deletion_sync.finish_scan(
+                                logger,
+                                deletion_scan,
+                                threshold=user_config.deletion_sync_threshold,
+                                delete=partial(deletion_sync.delete_asset, logger, library_object),
+                                notify=partial(
+                                    deletion_sync_notifier,
+                                    logger,
+                                    user_config,
+                                    directory,
+                                ),
+                            )
+
                         if user_config.auto_delete:
                             autodelete_photos(
                                 logger,
@@ -1347,10 +1607,19 @@ def core_single_run(
                                 user_config.sizes,
                                 lp_filename_generator,
                                 user_config.align_raw,
+                                forget=(
+                                    partial(deletion_sync.forget_asset, manifest_handle.connection)
+                                    if user_config.sync_deletions
+                                    and not user_config.dry_run
+                                    and manifest_handle is not None
+                                    else None
+                                ),
                             )
                         else:
                             pass
                     finally:
+                        if deletion_scan is not None and deletion_scan.dry_run:
+                            deletion_scan.connection.close()  # in-memory copy
                         if manifest_handle is not None:
                             manifest.close(manifest_handle)
         except PyiCloudFailedLoginException as error:
@@ -1397,6 +1666,9 @@ def core_single_run(
                 pass
             # In single run mode, return error after webui retry attempts
             return 1
+        except deletion_sync.DeletionSyncError as error:
+            logger.error("Deletion sync error, skipping user: %s", error)
+            return USER_SKIPPED
         except (
             ChunkedEncodingError,
             ContentDecodingError,

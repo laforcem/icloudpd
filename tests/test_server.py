@@ -170,6 +170,8 @@ def _user_config(username: str, cookie_directory: str) -> UserConfig:
         cookie_directory=cookie_directory,
         state_directory=None,
         require_mount_marker=False,
+        sync_deletions=False,
+        deletion_sync_threshold=-1,
         sizes=[AssetVersionSize.ORIGINAL],
         live_photo_size=LivePhotoVersionSize.ORIGINAL,
         recent=None,

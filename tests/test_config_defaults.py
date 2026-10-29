@@ -5,9 +5,11 @@ from icloudpd.config_defaults import GLOBAL_OPTION_DEFAULTS, USER_OPTION_DEFAULT
 
 
 def test_global_option_defaults_cover_every_configurable_global_field() -> None:
-    # help/version are pure CLI meta-flags, never config-file-settable
+    # help/version/deletion_command are pure CLI flags, never config-file-settable
     configurable_fields = {
-        f.name for f in dataclasses.fields(GlobalConfig) if f.name not in ("help", "version")
+        f.name
+        for f in dataclasses.fields(GlobalConfig)
+        if f.name not in ("help", "version", "deletion_command")
     }
     assert set(GLOBAL_OPTION_DEFAULTS.keys()) == configurable_fields
 

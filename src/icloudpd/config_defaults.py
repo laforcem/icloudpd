@@ -34,6 +34,8 @@ USER_OPTION_DEFAULTS: Dict[str, Any] = {
     "cookie_directory": "~/.pyicloud",
     "state_directory": None,
     "require_mount_marker": False,
+    "sync_deletions": False,
+    "deletion_sync_threshold": -1,
     "sizes": ["original"],
     "live_photo_size": "original",
     "recent": None,

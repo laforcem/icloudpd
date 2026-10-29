@@ -54,6 +54,25 @@ class ManifestHandle:
     pending_writes: int = 0
 
 
+def library_paths(directory: str, state_directory: str | None) -> tuple[str, str | None]:
+    """The download directory and state directory as every caller must resolve them.
+
+    One place, so the sync, its startup checks and the --resolve-deletions
+    commands always agree on which state.db belongs to an entry. `directory`
+    is taken literally (normpath only, never ~-expanded), exactly as the
+    downloader has always used it; `state_directory` expands ~.
+    """
+    return os.path.normpath(directory), (
+        os.path.normpath(os.path.expanduser(state_directory)) if state_directory else None
+    )
+
+
+def db_path(download_dir: str, state_directory: str | None) -> str:
+    """Path of the manifest database for a download directory."""
+    manifest_dir = state_directory if state_directory else os.path.join(download_dir, ".icloudpd")
+    return os.path.join(manifest_dir, "state.db")
+
+
 def open(
     logger: logging.Logger, download_dir: str, state_directory: str | None = None
 ) -> ManifestHandle | None:
@@ -64,21 +83,19 @@ def open(
     or created; callers decide whether to proceed without manifest tracking.
     """
     legacy_db_path = os.path.join(download_dir, ".icloudpd", "state.db")
-    manifest_dir = (
-        state_directory if state_directory else os.path.join(download_dir, ".icloudpd")
-    )
-    db_path = os.path.join(manifest_dir, "state.db")
-    if state_directory and not os.path.exists(db_path) and os.path.exists(legacy_db_path):
+    path = db_path(download_dir, state_directory)
+    manifest_dir = os.path.dirname(path)
+    if state_directory and not os.path.exists(path) and os.path.exists(legacy_db_path):
         logger.warning(
             "Found an existing asset manifest at %s but state_directory is set, so a new "
             "one will be created at %s. To keep your history, stop icloudpd and copy the "
             "old state.db to the new location.",
             legacy_db_path,
-            db_path,
+            path,
         )
     try:
         os.makedirs(manifest_dir, exist_ok=True)
-        connection = sqlite3.connect(db_path)
+        connection = sqlite3.connect(path)
         connection.execute(_SCHEMA)
         connection.commit()
         return ManifestHandle(connection=connection)
