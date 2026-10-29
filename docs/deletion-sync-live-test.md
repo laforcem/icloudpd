@@ -60,3 +60,22 @@ Result:
 - The item stays `approved` (it was approved by hand) or becomes `failed` (it went out without review) in the `deletion_items` table of `state.db`, and is retried on the next sync. `--list-pending-deletions` lists only held items, so it will not show it.
 
 On a failure, record the log lines and the date above, and do not enable `sync_deletions` on that library.
+
+## Part 2: Telegram review
+
+Nothing here is run against live Telegram or a live iCloud session in automated tests. Do these by hand before enabling review on the homelab. Setup: `control_token_file` on icloudpd, `ICLOUDPD_CONTROL_TOKEN_FILE` on the bot, a scratch entry with `deletion_sync_threshold: 1` or a small `N`, and a Bot API 10.1+ chat.
+
+1. Thumbnails: hold a batch containing at least one photo and one video. Both render in the review message on your phone (videos show `▶ N`).
+2. Paging and keep: hold more than 10 photos. Page forward and back. Mark 2 as 💾 keep. Tap `✅ Delete N, keep 2`. Run the next sync: the rest go to Recently Deleted and the 2 re-download to the local library.
+3. Bot restart: open a review message, restart the bot container, then use the buttons on the old message. They still work.
+4. Session age: open a held batch about 20 hours after the last scan. Record whether the existing session worked, needed the token-only refresh, or fell back to the text list.
+5. Video JPEG field: record which JPEG field videos carry (the thumbnail source).
+6. Two entries: hold a batch in two accounts or entries. Act on one (including `/held`). The other is untouched and the right one is deleted.
+
+Result:
+
+- Date:
+- Outcome per check (pass / fail):
+- Session age result (worked / refreshed / text):
+- Video JPEG field:
+- Notes:

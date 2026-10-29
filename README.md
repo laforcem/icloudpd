@@ -87,7 +87,7 @@ users:
 
 Only deletions that went out without review count toward the 7 days. Approved ones don't. Once a batch is held, every later candidate is held too, until you resolve the whole batch. Held photos are not re-downloaded while they wait. A held photo whose file reappears locally is dropped from the batch on its own; if that empties the batch, the hold ends. The check runs at the end of each completed scan; a scan that is cancelled partway deletes and holds nothing.
 
-**Reviewing a held batch.** Approving is CLI-only for now. These commands read `state.db` only: no iCloud login, and they work with or without a config file. Pick the entry with `--for-username` (required) and `--for-library` (default `PrimarySync`).
+**Reviewing a held batch.** From the CLI, or from Telegram (next section). The CLI commands read `state.db` only: no iCloud login, and they work with or without a config file. Pick the entry with `--for-username` (required) and `--for-library` (default `PrimarySync`).
 
 ```sh
 icloudpd --list-pending-deletions --for-username you@icloud.com
@@ -110,7 +110,24 @@ icloudpd --username you@icloud.com --directory /data/shared --state-directory /s
 
 - `approve`: the held photos are deleted at the end of the next completed sync. Approved photos bypass the threshold. If iCloud doesn't confirm a delete, the photo stays approved and is retried on the next sync. An approved photo that is no longer in iCloud is skipped.
 - `reject`: the photos re-download on the next sync.
-- Approve and reject apply to the whole batch, and print what they changed. Run them while no sync is writing the database; if it is busy, they say so and exit 1.
+- Approve and reject apply to the whole batch, and print what they changed. Run them while no sync is writing the database; if it is busy, they say so and exit 1. They need no iCloud login and no thumbnails.
+
+**Reviewing in Telegram.** With the [Telegram bot](./integrations/telegram-bot/README.md) and the control channel set up, a held batch produces one review message per entry. Deletions under the threshold send nothing to Telegram; only a held batch does.
+
+- The message shows numbered thumbnails, 10 per page, with Prev/Next. Each photo has a 🗑/💾 toggle (💾 = keep). `✅ Delete N, keep M` applies; `❌ Keep all` rejects the whole batch.
+- Deletes go out at the end of the next completed sync, not immediately. A kept photo re-downloads to the local library on that sync.
+- Apply acts only on what the message showed. If the batch or the keep marks changed since the message was drawn, nothing is deleted and the message is redrawn.
+- `/held` re-sends a review message for every entry that has a held batch. There are no `/approve` or `/reject` commands: approving by command would act on photos you never saw.
+- If icloudpd's iCloud session can't be used when the review opens, the message is a numbered text list (filename and date) and the buttons still work. Thumbnails return after the next successful scan login.
+
+**Control channel.** The bot talks to icloudpd over a separate HTTP port, not the web UI. It is off unless `control_token_file` is set to a file holding a bearer token. The bot reads the same token from `ICLOUDPD_CONTROL_TOKEN_FILE` (a raw `ICLOUDPD_CONTROL_TOKEN` is rejected); without it, review in the bot is disabled.
+
+```yaml
+control_token_file: /run/secrets/icloudpd_control_token   # CLI: --control-token-file
+control_port: 2012                                        # CLI: --control-port (default)
+```
+
+It binds `0.0.0.0`. Do not publish the port outside the Docker network; the token is the only protection. The bot finds it at `ICLOUDPD_CONTROL_URL` (default `http://icloudpd:2012`).
 
 **One entry per library.** Deletion sync compares one library against one `state.db`, so each library needs its own entry with its own `directory` and `state_directory`. icloudpd refuses to start if two entries share a `state.db` and either has `sync_deletions` on. It also refuses `sync_deletions` without `require_mount_marker`, or with `recent` or `until_found`. Without `state_directory` it warns, since the record of downloads then lives in the library.
 
@@ -127,4 +144,4 @@ icloudpd --username you@icloud.com --directory /data/shared --state-directory /s
 | `deletion_sync_threshold_tripped` | A batch was held | `held_count`, `new_count`, `threshold`, `items` (all held photos), `total` |
 | `deletion_sync_summary` | At least one delete succeeded or failed | `deleted_count`, `failed_count`, `items` (the deleted photos only), `total` |
 
-The first deletion against live iCloud is not yet verified. See [docs/deletion-sync-live-test.md](./docs/deletion-sync-live-test.md) for the manual check.
+The first deletion against live iCloud, and the Telegram review, are not yet verified against live services. See [docs/deletion-sync-live-test.md](./docs/deletion-sync-live-test.md) for the manual checks.
