@@ -36,6 +36,8 @@ def make_global_config(password_providers: list[PasswordProvider]) -> GlobalConf
         password_providers=password_providers,
         mfa_provider=MFAProvider.WEBUI,
         webui_port=2011,
+        control_token_file=None,
+        control_port=2012,
     )
 
 

@@ -37,6 +37,7 @@ from tzlocal import get_localzone
 
 from foundation.core import compose, identity, map_, partial_1_1
 from icloudpd import (
+    control,
     deletion_sync,
     download,
     exif_datetime,
@@ -365,6 +366,27 @@ def _deletion_sync_config_errors(user_configs: Sequence[UserConfig]) -> List[str
     return errors
 
 
+def _read_control_token(logger: logging.Logger, path: str) -> str | None:
+    """The control channel's bearer token, or None (error logged) if unusable.
+
+    Read once at startup. Never logs the token itself.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            token = f.read().strip()
+    except (OSError, UnicodeDecodeError) as ex:
+        logger.error(
+            "control_token_file %s could not be read (%s); not starting",
+            path,
+            type(ex).__name__,
+        )
+        return None
+    if not token:
+        logger.error("control_token_file %s is empty; not starting", path)
+        return None
+    return token
+
+
 def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserConfig]) -> int:
     """Run the application with the new configuration system"""
 
@@ -400,6 +422,17 @@ def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserCon
                 user_config.username,
             )
 
+    control_token: str | None = None
+    if global_config.control_token_file:
+        control_token = _read_control_token(logger, global_config.control_token_file)
+        if control_token is None:
+            return 2
+        try:
+            control.entry_keys(user_configs)
+        except control.EntryKeyCollision as ex:
+            logger.error("%s; rename one library or account", ex)
+            return 2
+
     # Create shared status exchange for web server and progress tracking
     shared_status_exchange = StatusExchange()
 
@@ -420,6 +453,22 @@ def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserCon
             args=[logger, shared_status_exchange, "0.0.0.0", global_config.webui_port],
         )
         server_thread.start()
+
+    if control_token is not None:
+        logger.debug("Starting deletion-review control channel...")
+        control_thread = Thread(
+            target=control.serve_control,
+            daemon=True,
+            args=[
+                logger,
+                control_token,
+                user_configs,
+                registry,
+                "0.0.0.0",
+                global_config.control_port,
+            ],
+        )
+        control_thread.start()
 
     # Check if we're in watch mode
     watch_interval = global_config.watch_with_interval

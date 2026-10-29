@@ -95,6 +95,8 @@ class CliTestCase(TestCase):
                         ],
                         mfa_provider=MFAProvider.CONSOLE,
                         webui_port=2011,
+                        control_token_file=None,
+                        control_port=2012,
                     ),
                     [],
                 ),
@@ -120,6 +122,8 @@ class CliTestCase(TestCase):
                         ],
                         mfa_provider=MFAProvider.WEBUI,
                         webui_port=2011,
+                        control_token_file=None,
+                        control_port=2012,
                     ),
                     [],
                 ),
@@ -150,6 +154,8 @@ class CliTestCase(TestCase):
                         password_providers=[PasswordProvider.WEBUI, PasswordProvider.CONSOLE],
                         mfa_provider=MFAProvider.CONSOLE,
                         webui_port=2011,
+                        control_token_file=None,
+                        control_port=2012,
                     ),
                     [],
                 ),
@@ -175,6 +181,8 @@ class CliTestCase(TestCase):
                         ],
                         mfa_provider=MFAProvider.CONSOLE,
                         webui_port=2011,
+                        control_token_file=None,
+                        control_port=2012,
                     ),
                     [],
                 ),
@@ -202,6 +210,8 @@ class CliTestCase(TestCase):
                         ],
                         mfa_provider=MFAProvider.CONSOLE,
                         webui_port=2011,
+                        control_token_file=None,
+                        control_port=2012,
                     ),
                     [
                         UserConfig(
@@ -315,6 +325,8 @@ class CliTestCase(TestCase):
                         ],
                         mfa_provider=MFAProvider.CONSOLE,
                         webui_port=2011,
+                        control_token_file=None,
+                        control_port=2012,
                     ),
                     [
                         UserConfig(
