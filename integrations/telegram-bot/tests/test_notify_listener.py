@@ -222,3 +222,25 @@ async def test_threshold_tripped_event_invokes_its_own_handler() -> None:
     assert [e["event_type"] for e in tripped] == ["deletion_sync_threshold_tripped"]
     assert await _post_event(app, "deletion_sync_summary") == 204
     assert len(tripped) == 1
+
+
+@pytest.mark.asyncio
+async def test_threshold_tripped_returns_before_the_review_is_sent() -> None:
+    import asyncio
+
+    release = asyncio.Event()
+    done: list[str] = []
+
+    async def slow(event: dict[str, Any]) -> None:
+        await release.wait()
+        done.append(event["event_type"])
+
+    app = build_notify_app(_noop, _noop, _noop, _noop, _noop, _noop, slow)
+
+    # The 204 must not wait for the review message: icloudpd's forwarder gives up after 5 s.
+    assert await asyncio.wait_for(_post_event(app, "deletion_sync_threshold_tripped"), 1) == 204
+    assert done == []
+    release.set()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert done == ["deletion_sync_threshold_tripped"]

@@ -162,6 +162,9 @@ def _keyboard(key: str, page: dict[str, Any]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[r for r in rows if r])
 
 
+_THUMB_CACHE_MAX = 200
+
+
 class ReviewService:
     def __init__(
         self, bot: Bot, client: ControlClient, allowed_chat_ids: frozenset[int]
@@ -170,6 +173,9 @@ class ReviewService:
         self._client = client
         self._allowed = allowed_chat_ids
         self.last_message: dict[tuple[int, str], int] = {}
+        # A tap redraws the page; thumbnails take about a second each to fetch, so keep the
+        # ones already fetched (placeholders are not cached, so they retry).
+        self._thumb_cache: dict[tuple[str, str], bytes] = {}
 
     # -- inbound events ---------------------------------------------------
 
@@ -298,12 +304,18 @@ class ReviewService:
 
     async def _fetch_thumbs(self, key: str, page: dict[str, Any]) -> dict[str, bytes | None]:
         async def one(record_name: str) -> tuple[str, bytes | None]:
+            cached = self._thumb_cache.get((key, record_name))
+            if cached is not None:
+                return record_name, cached
             try:
-                return record_name, await asyncio.to_thread(
-                    self._client.thumbnail, key, record_name
-                )
+                data = await asyncio.to_thread(self._client.thumbnail, key, record_name)
             except requests.RequestException:
                 return record_name, None
+            if data is not None:
+                self._thumb_cache[(key, record_name)] = data
+                if len(self._thumb_cache) > _THUMB_CACHE_MAX:
+                    del self._thumb_cache[next(iter(self._thumb_cache))]
+            return record_name, data
 
         results = await asyncio.gather(*(one(i["record_name"]) for i in page["items"]))
         return dict(results)

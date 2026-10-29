@@ -214,7 +214,7 @@ def build_control_app(
             }
         )
 
-    @app.route("/v1/entries/<key>/held/<record_name>/thumbnail", methods=["GET"])
+    @app.route("/v1/entries/<key>/held/<path:record_name>/thumbnail", methods=["GET"])
     def thumbnail(key: str, record_name: str) -> Response:
         e = entry(key)
         if e is None:
@@ -252,7 +252,7 @@ def build_control_app(
         data = request.get_json(silent=True)
         return data if isinstance(data, dict) else None
 
-    @app.route("/v1/entries/<key>/held/<record_name>/keep", methods=["POST"])
+    @app.route("/v1/entries/<key>/held/<path:record_name>/keep", methods=["POST"])
     def keep(key: str, record_name: str) -> Response:
         e = entry(key)
         if e is None:

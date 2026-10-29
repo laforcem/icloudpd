@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Any, Iterator, Sequence
 from unittest.mock import patch
+from urllib.parse import quote
 
 import pytest
 import yaml as _yaml
@@ -374,6 +375,39 @@ def test_thumbnail_error_is_503_not_500(three: list[UserConfig], error: Exceptio
         response = client.get(url, headers=AUTH)
     assert response.status_code == 503
     assert response.get_json() == {"reason": "thumbnail_unavailable"}
+
+
+# CloudKit record names are base64, so they can contain "/" and "+".
+SLASHED = "ab/cd+ef"
+
+
+@pytest.mark.parametrize("encoded", [True, False])
+def test_thumbnail_and_keep_accept_record_name_with_slash(
+    three: list[UserConfig], encoded: bool
+) -> None:
+    conn = _db(three[1])
+    conn.execute(
+        "INSERT INTO deletion_items (record_name, filename, asset_date_utc, detected_utc,"
+        " status, status_changed_utc) VALUES (?, 'X.JPG', '2024-01-02T00:00:00+00:00',"
+        " '2026-10-01T00:01:00+00:00', 'held', 'x')",
+        (SLASHED,),
+    )
+    conn.commit()
+    conn.close()
+    client = _client(three)
+    key = _key(three[1])
+    name = quote(SLASHED, safe="") if encoded else SLASHED
+    with patch.object(deletion_review, "fetch_thumbnail", return_value=b"\xff\xd8jpeg") as fetch:
+        response = client.get(f"/v1/entries/{key}/held/{name}/thumbnail", headers=AUTH)
+    assert response.status_code == 200
+    assert fetch.call_args.args[3] == SLASHED
+    token = client.get(f"/v1/entries/{key}/held", headers=AUTH).get_json()["batch_token"]
+    response = client.post(
+        f"/v1/entries/{key}/held/{name}/keep",
+        json={"keep": True, "batch_token": token},
+        headers=AUTH,
+    )
+    assert response.status_code == 200
 
 
 def test_thumbnail_for_record_not_held_404(three: list[UserConfig]) -> None:

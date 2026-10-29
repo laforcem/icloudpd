@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -323,6 +324,15 @@ async def test_page_edits_with_new_thumbs() -> None:
     assert bot.edits[0]["reply_markup"] is not None
 
 
+async def test_toggle_reuses_thumbnails_already_fetched() -> None:
+    service, _, client = make_service()
+    await service._draw(CHAT, 101, KEY, 1)
+    first = sum(1 for c in client.calls if c[0] == "thumbnail")
+    await service.on_callback(make_callback(pack(KEY, "t", 1, 3, TOKEN, "")))
+    assert first == 10
+    assert sum(1 for c in client.calls if c[0] == "thumbnail") == first
+
+
 async def test_apply_edits_final_text_no_buttons() -> None:
     service, bot, client = make_service()
     await service.on_callback(make_callback(pack(KEY, "a", 1, 0, TOKEN, "")))
@@ -441,6 +451,11 @@ async def test_summary_event_sends_nothing() -> None:
         assert (await http.post("/notify", json=summary)).status == 204
         assert bot.sent == [] and client.calls == []
         assert (await http.post("/notify", json=TRIPPED)).status == 204
+        # The review is sent in the background, after the 204.
+        for _ in range(100):
+            if bot.sent:
+                break
+            await asyncio.sleep(0.01)
     assert len(bot.sent) == 1
 
 
