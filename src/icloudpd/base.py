@@ -351,6 +351,11 @@ def _deletion_sync_config_errors(user_configs: Sequence[UserConfig]) -> List[str
                 f"{user_config.username}: sync_deletions requires require_mount_marker, so a "
                 "dropped mount is never mistaken for mass deletion"
             )
+        if user_config.directory and user_config.directory.startswith("~"):
+            errors.append(
+                f"{user_config.username}: directory {user_config.directory!r} starts with '~', "
+                "which icloudpd does not expand; use an absolute path"
+            )
         if user_config.recent is not None or user_config.until_found is not None:
             errors.append(
                 f"{user_config.username}: sync_deletions is not compatible with recent or "
@@ -565,7 +570,7 @@ def _process_all_users_once(
                     download_builder,
                     logger,
                     user_config.folder_structure,
-                    manifest.library_paths(user_config.directory, None)[0],
+                    user_config.directory,
                     user_config.sizes,
                     user_config.force_size,
                     global_config.only_print_filenames,
@@ -1662,7 +1667,7 @@ def core_single_run(
             # In single run mode, return error after webui retry attempts
             return 1
         except deletion_sync.DeletionSyncError as error:
-            logger.error("Deletion sync state error, skipping user: %s", error)
+            logger.error("Deletion sync error, skipping user: %s", error)
             return USER_SKIPPED
         except (
             ChunkedEncodingError,

@@ -58,13 +58,13 @@ def library_paths(directory: str, state_directory: str | None) -> tuple[str, str
     """The download directory and state directory as every caller must resolve them.
 
     One place, so the sync, its startup checks and the --resolve-deletions
-    commands always agree on which state.db belongs to an entry.
+    commands always agree on which state.db belongs to an entry. `directory`
+    is taken literally (normpath only, never ~-expanded), exactly as the
+    downloader has always used it; `state_directory` expands ~.
     """
-
-    def resolve(path: str) -> str:
-        return os.path.normpath(os.path.expanduser(path))
-
-    return resolve(directory), resolve(state_directory) if state_directory else None
+    return os.path.normpath(directory), (
+        os.path.normpath(os.path.expanduser(state_directory)) if state_directory else None
+    )
 
 
 def db_path(download_dir: str, state_directory: str | None) -> str:

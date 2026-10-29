@@ -501,22 +501,42 @@ def test_auto_delete_forgets_recently_deleted(tmp_path: Path) -> None:
     assert _known(library) == 0
 
 
-def test_tilde_directory_resolved_once_for_everything(
+def test_tilde_directory_literal_when_sync_off(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    library = _listing_library(tmp_path)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    """Feature off, behavior unchanged: icloudpd never expands ~ in directory."""
+    library = _Library(tmp_path)
     library.cassette = os.path.abspath(library.cassette)
-    (tmp_path / "cwd").mkdir()
-    monkeypatch.chdir(tmp_path / "cwd")  # a literal "~/data" would land under here
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    literal = cwd / "~" / "data"
+    create_files(
+        str(literal),
+        [("2018/07/30", "IMG_7408.JPG", 1151066), ("2018/07/30", "IMG_7407.JPG", 656257)],
+    )
     library.data_dir = os.path.join("~", "data")
-    assert library.run(_SYNC) == 0
-    library.data_dir = str(tmp_path / "data")
-    assert os.path.isfile(library.path(_DELETED))
-    assert not os.path.exists(tmp_path / "cwd" / "~")
-    with library.db() as conn:
+    assert library.run(_LISTING) == 0
+    assert os.path.isfile(literal / _DELETED)
+    assert not os.path.exists(tmp_path / "data" / _DELETED)
+    with closing(sqlite3.connect(manifest.db_path(str(literal), None))) as conn:
         stored = {r[0] for r in conn.execute("SELECT local_path FROM downloaded_assets")}
-    assert library.path(_DELETED) in stored
+    assert os.path.join("~", "data", _DELETED) in stored
+
+
+def test_tilde_directory_rejected_with_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    library = _Library(tmp_path)
+    library.data_dir = os.path.join("~", "data")
+    global_config, users = cli.parse(
+        ["--username", "u", "-d", library.data_dir, "--sync-deletions", "--require-mount-marker"]
+    )
+    with patch.object(base, "_process_all_users_once", return_value=0) as process:
+        assert base.run_with_configs(global_config, users) == 2
+    process.assert_not_called()
+    assert "starts with '~'" in caplog.text
 
 
 def test_dry_run_logs_suspects_at_info(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

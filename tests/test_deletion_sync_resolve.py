@@ -347,7 +347,7 @@ def test_other_statuses_untouched(tmp_path: Path, action: str) -> None:
     assert rows == [(st, "old") for st in others]
 
 
-@pytest.mark.parametrize("tilde", ["directory", "state_directory"])
+@pytest.mark.parametrize("tilde", ["state_directory"])
 def test_resolver_expands_tilde(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -376,9 +376,10 @@ def test_resolver_expands_tilde(
 
 
 def test_library_paths() -> None:
+    """directory is taken literally, as on master; only state_directory expands ~."""
     home = os.path.expanduser("~")
     assert manifest.library_paths("~/lib/", "~/st/../st") == (
-        os.path.join(home, "lib"),
+        os.path.join("~", "lib"),
         os.path.join(home, "st"),
     )
     assert manifest.library_paths("/data//you", None) == ("/data/you", None)
